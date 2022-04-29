@@ -1,5 +1,5 @@
-all: src.c
-	cc -o tar src.c -Wall -Wextra -std=c99
+all: mytar.c
+	cc -o mytar mytar.c -Wall -Wextra -std=c99
 
 clean: 
 	rm tar
