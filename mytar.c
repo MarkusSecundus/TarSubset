@@ -204,11 +204,12 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
 
         size_t bytes_in_file = parse_octal_array(buffer.header_block.header.size, NULL);
         size_t num_of_blocks = block_count_from_bytes(bytes_in_file);
-        
+
+
         supplier_context.entry_bytes_remaining = bytes_in_file;
         invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
 
-        fseek(f, block_begin_pos + block_count_from_bytes(num_of_blocks)*BLOCK_BYTES, SEEK_SET);
+        fseek(f, block_begin_pos + num_of_blocks*BLOCK_BYTES, SEEK_SET);
     }
 #undef read_block
 
@@ -223,10 +224,11 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
         (void)block_supplier;
         printf("%s ... %lu blocks\n", begin->header.name, num_of_blocks);
         
-        size_t bl_size;
-        tar_block_t *bl = invoke(block_supplier, &bl_size);
-        bl->data[bl_size] = '\0';
-        printf("\t%lu bytes -- contents:'\n%s\n'\n", bl_size, bl->data);
+        /*size_t bl_size;
+        for(tar_block_t *bl; (bl = invoke(block_supplier, &bl_size)) ;){
+            bl->data[bl_size] = '\0';
+            printf("\tB %lu bytes -- contents:'\n%s\n'\n", bl_size, bl->data);
+        }*/
 
         return 0;
     }
@@ -251,7 +253,7 @@ int main(int argc, char **argv){
 
     request_t req = {
         .action = list_contents_action,
-        .file_name = "./testfiles/arch.tar",
+        .file_name = "./testfiles/arch2.tar",
         .files = NULL,
         .isVerbose = false
     };
