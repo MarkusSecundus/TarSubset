@@ -11,6 +11,9 @@
 #define invoke0(func) ((func).function((func).context))
 #define invoke(func, ...) ((func).function((func).context, ## __VA_ARGS__))
 
+#define min(a,b) ((a) <= (b) ? (a) : (b))
+#define max(a,b) ((a) >= (b) ? (a) : (b))
+
 #define BLOCK_BYTES 512
 
 
@@ -23,10 +26,10 @@ size_t block_count_from_bytes(size_t bytes){
 
 
 size_t fsize(FILE *f){
-    size_t current_pos = ftell(f);
+    size_t block_begin_pos = ftell(f);
     fseek(f, 0, SEEK_END);
     size_t ret = ftell(f);
-    fseek(f, current_pos, SEEK_SET);
+    fseek(f, block_begin_pos, SEEK_SET);
     return ret;
 }
 
@@ -34,6 +37,8 @@ size_t fsize(FILE *f){
 typedef struct{
     char data[BLOCK_BYTES];
 } tar_block_t;
+
+static const tar_block_t ZERO_BLOCK;
 
 typedef struct 
 {                              /* byte offset */
@@ -67,7 +72,6 @@ typedef char* string_t;
 typedef string_t *strings_list_t;
 
 
-
 typedef struct request request_t;
 
 typedef int (*user_action_t)(request_t *context);
@@ -86,7 +90,6 @@ struct request {
 
 
 static bool is_end_block(const tar_block_t *block){
-    static const tar_block_t ZERO_BLOCK;
 
     return memcmp(block, &ZERO_BLOCK, BLOCK_BYTES) == 0;
 }
@@ -137,39 +140,56 @@ static int check_header_checksum(tar_header_t *header){
 }
 
 
+    struct supplier_context{
+        tar_block_t *buffer;
+        size_t entry_bytes_remaining;
+        FILE *file;
+    };
 
+    tar_block_t *iterate_archive_supplier(void *context_, size_t *block_size_bytes){
+        struct supplier_context *ctx = (struct supplier_context *)context_;
+        if(block_size_bytes) *block_size_bytes = 0;
+
+        if(ctx->entry_bytes_remaining <= 0)
+            return NULL;
+
+        size_t to_read = min(BLOCK_BYTES, ctx->entry_bytes_remaining);
+        size_t did_read = fread(&(ctx->buffer->data),1, to_read, ctx->file);
+        if(did_read < to_read)
+            Exit_Message("Something went terribly wrong with reading the file!\n");
+        ctx->entry_bytes_remaining -= did_read;
+
+        if(block_size_bytes) *block_size_bytes = did_read;
+
+        return ctx->buffer;
+    }
 
 int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_include, tar_entry_action_t action){
     (void)names_to_include;
-
-    debug("inside iterate_archive");
 
     union{
         tar_header_block_t header_block;
         tar_block_t block;
     } buffer;
+    tar_block_t contents_buffer;
 
-    tar_block_supplier_t block_supplier = {
-        .function = NULL, .context = NULL
-    };
 
-    debug("opening the file");
     FILE *f = fopen(fileName, mode);
     if(!f) Exit_Message("File %s not found", fileName);
-    debug("file opened: %p", f);
 
-    debug1("beginning stream position: %lu", ftell(f));
-    size_t file_size = fsize(f);
-    debug1("file size: %lubytes - %lf blocks", file_size, file_size*1.0/BLOCK_BYTES);
+    struct supplier_context supplier_context = {
+        .buffer = &(contents_buffer),
+        .file = f
+    };
+    
+    tar_block_supplier_t block_supplier = {
+        .function = iterate_archive_supplier, .context = &supplier_context
+    };
 
-#define read_block() (fread(buffer.block.data, BLOCK_BYTES, 1, f) < 1)
+#define read_block() (fread(buffer.block.data, BLOCK_BYTES, 1, f) >= 1)
 
     while(!feof(f)){
-        debug1("current stream position: %lu", ftell(f));
-
-        debug("starting fread");
-        if(read_block()){
-            debug1("fread returned non1");
+        if(!read_block()){
             break;
         }
         if(is_end_block(&(buffer.block))){
@@ -180,16 +200,15 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
             if(is_end_block(&(buffer.block)))
                 break;
         }
+        size_t block_begin_pos = ftell(f);
 
-        debug("finished fread");
         size_t bytes_in_file = parse_octal_array(buffer.header_block.header.size, NULL);
         size_t num_of_blocks = block_count_from_bytes(bytes_in_file);
-        debug1("bytes: %5lu -- %2lu (%s) blocks",bytes_in_file, num_of_blocks, buffer.header_block.header.size);
         
-        debug("invoking the action");
+        supplier_context.entry_bytes_remaining = bytes_in_file;
         invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
 
-        fseek(f, (num_of_blocks)*BLOCK_BYTES, SEEK_CUR);
+        fseek(f, block_begin_pos + block_count_from_bytes(num_of_blocks)*BLOCK_BYTES, SEEK_SET);
     }
 #undef read_block
 
@@ -202,7 +221,13 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
         (void)ctx;
         (void)num_of_blocks;
         (void)block_supplier;
-        printf("%s ... %lu bytes\n", begin->header.name, num_of_blocks);
+        printf("%s ... %lu blocks\n", begin->header.name, num_of_blocks);
+        
+        size_t bl_size;
+        tar_block_t *bl = invoke(block_supplier, &bl_size);
+        bl->data[bl_size] = '\0';
+        printf("\t%lu bytes -- contents:'\n%s\n'\n", bl_size, bl->data);
+
         return 0;
     }
 //option -t
@@ -215,7 +240,6 @@ int list_contents_action(request_t *ctx){
 
     debug("iterating archive");
     return iterate_archive(ctx->file_name, "rb", NULL, perform_listing);
-    ;
 }
 
 
