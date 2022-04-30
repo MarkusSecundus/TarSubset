@@ -34,6 +34,8 @@ size_t fsize(FILE *f){
 }
 
 
+
+
 typedef struct{
     char data[BLOCK_BYTES];
 } tar_block_t;
@@ -113,9 +115,9 @@ static int parse_octal(const char *c, size_t length, int *errno){
 }
 #define parse_octal_array(field, errno) parse_octal((field), LEN(field), errno) 
 
-static char checksum(void *arr, size_t length){
-    char ret = 0;
-    for(char *p = (char*)arr;length > 0; ++p, --length)
+static int checksum(void *arr, size_t length){
+    int ret = 0;
+    for(unsigned char *p = (unsigned char*)arr; length > 0; ++p, --length)
         ret += *p;
     return ret;
 }
@@ -164,8 +166,7 @@ static int check_header_checksum(tar_header_t *header){
         return ctx->buffer;
     }
 
-int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_include, tar_entry_action_t action){
-    (void)names_to_include;
+int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action){
 
     union{
         tar_header_block_t header_block;
@@ -186,7 +187,8 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
         .function = iterate_archive_supplier, .context = &supplier_context
     };
 
-#define read_block() (fread(buffer.block.data, BLOCK_BYTES, 1, f) >= 1)
+
+    #define read_block() (fread(buffer.block.data, BLOCK_BYTES, 1, f) >= 1)
 
     while(!feof(f)){
         if(!read_block()){
@@ -211,11 +213,32 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
 
         fseek(f, block_begin_pos + num_of_blocks*BLOCK_BYTES, SEEK_SET);
     }
-#undef read_block
+    #undef read_block
 
     return 0;
 }
 
+
+    struct only_whitelist_files_decorator_context{
+        tar_entry_action_t inner_action;
+        strings_list_t files_to_include;
+        bool *files_to_include_was_encountered_flags;
+    };
+
+int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+    struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
+    
+    bool *flag = ctx->files_to_include_was_encountered_flags;
+    for(string_t s = ctx->files_to_include; s ; ++s, ++flag){
+        if(strcmp(s, begin->header.name)==0){
+            if(*flag)
+                Warn_Message("File '%s' encountered for more then first time!", s);
+            *flag = true;
+            return invoke(ctx->inner_action, begin, num_of_blocks, block_supplier);
+        }
+    }
+
+}
 
 
     static int contents_lister(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
@@ -223,12 +246,6 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
         (void)num_of_blocks;
         (void)block_supplier;
         printf("%s ... %lu blocks\n", begin->header.name, num_of_blocks);
-        
-        /*size_t bl_size;
-        for(tar_block_t *bl; (bl = invoke(block_supplier, &bl_size)) ;){
-            bl->data[bl_size] = '\0';
-            printf("\tB %lu bytes -- contents:'\n%s\n'\n", bl_size, bl->data);
-        }*/
 
         return 0;
     }
@@ -240,8 +257,7 @@ int list_contents_action(request_t *ctx){
         .context = NULL
     };
 
-    debug("iterating archive");
-    return iterate_archive(ctx->file_name, "rb", NULL, perform_listing);
+    return iterate_archive(ctx->file_name, "rb", perform_listing);
 }
 
 
