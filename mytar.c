@@ -14,16 +14,18 @@
 #define min(a,b) ((a) <= (b) ? (a) : (b))
 #define max(a,b) ((a) >= (b) ? (a) : (b))
 
-#define BLOCK_BYTES 512
+
+#define count_to_nil(arr)({\
+    size_t ret = 0;\
+    for(__auto_type p = arr;*p;++p)++ret;\
+    ret;\
+})
+
+
 
 
 #define Exit_Message(...) (fprintf(stderr, __VA_ARGS__), exit(1))
 #define Warn_Message(...) (fprintf(stderr, __VA_ARGS__))
-
-size_t block_count_from_bytes(size_t bytes){
-    return bytes/BLOCK_BYTES + !!(bytes%BLOCK_BYTES);
-}
-
 
 size_t fsize(FILE *f){
     size_t block_begin_pos = ftell(f);
@@ -33,7 +35,12 @@ size_t fsize(FILE *f){
     return ret;
 }
 
+#define MAX_BYTES_TO_STACKALLOC 1024
 
+
+
+
+#define BLOCK_BYTES 512
 
 
 typedef struct{
@@ -89,7 +96,9 @@ struct request {
 
 
 
-
+size_t block_count_from_bytes(size_t bytes){
+    return bytes/BLOCK_BYTES + !!(bytes%BLOCK_BYTES);
+}
 
 static bool is_end_block(const tar_block_t *block){
 
@@ -229,15 +238,55 @@ int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t
     struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
     
     bool *flag = ctx->files_to_include_was_encountered_flags;
-    for(string_t s = ctx->files_to_include; s ; ++s, ++flag){
-        if(strcmp(s, begin->header.name)==0){
+    for(strings_list_t s = ctx->files_to_include; s ; ++s, ++flag){
+        if(strcmp(*s, begin->header.name)==0){
             if(*flag)
-                Warn_Message("File '%s' encountered for more then first time!", s);
+                Warn_Message("File '%s' encountered for more then first time!", *s);
             *flag = true;
             return invoke(ctx->inner_action, begin, num_of_blocks, block_supplier);
         }
     }
+    return 0;
+}
 
+int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
+    
+    size_t files_count;
+    if(!files_to_include || !(files_count = count_to_nil(files_to_include)))
+        return iterate_archive(fileName, mode, action);
+    size_t flag_buffer_size = files_count;
+
+    size_t bytes_to_stackalloc = (flag_buffer_size*sizeof(bool)) > MAX_BYTES_TO_STACKALLOC ? 0 : flag_buffer_size;
+    bool stackallocked[bytes_to_stackalloc];
+    bool *flag_buffer;
+    if(bytes_to_stackalloc){
+        flag_buffer = stackallocked;
+    }
+    else{
+        if(!(flag_buffer = malloc(flag_buffer_size*sizeof(bool))))
+            Exit_Message("Out of memory!");
+    }
+    for(size_t t = 0; t< flag_buffer_size ; ++t)   
+        flag_buffer[t] = 0;
+    
+    struct only_whitelist_files_decorator_context ctx = {
+        .inner_action = action,
+        .files_to_include = files_to_include,
+        .files_to_include_was_encountered_flags = flag_buffer
+    };
+    tar_entry_action_t decorated_action = {
+        .function = only_whitelist_files_decorator,
+        .context = &ctx
+    };
+
+    int ret = iterate_archive(fileName, mode, decorated_action);
+
+    for(size_t t = 0; t< flag_buffer_size ; ++t){
+        Warn_Message("%s: Not found in archive", files_to_include[t]);
+        if(!ret) ret = -1;
+    }
+
+    return ret;
 }
 
 
@@ -257,7 +306,7 @@ int list_contents_action(request_t *ctx){
         .context = NULL
     };
 
-    return iterate_archive(ctx->file_name, "rb", perform_listing);
+    return iterate_archive_with_whitelist_decorator(ctx->file_name, "rb", perform_listing, ctx->files);
 }
 
 
