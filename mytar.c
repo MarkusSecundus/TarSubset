@@ -14,7 +14,12 @@
 #define BLOCK_BYTES 512
 
 
-#define Exit_Message(...)(fprintf(stderr, __VA_ARGS__), exit(1))
+#define Exit_Message(...) (fprintf(stderr, __VA_ARGS__), exit(1))
+#define Warn_Message(...) (fprintf(stderr, __VA_ARGS__))
+
+size_t block_count_from_bytes(size_t bytes){
+    return bytes/BLOCK_BYTES + !!(bytes%BLOCK_BYTES);
+}
 
 
 size_t fsize(FILE *f){
@@ -80,7 +85,7 @@ struct request {
 
 
 
-static bool isEndBlock(const tar_block_t *block){
+static bool is_end_block(const tar_block_t *block){
     static const tar_block_t ZERO_BLOCK;
 
     return memcmp(block, &ZERO_BLOCK, BLOCK_BYTES) == 0;
@@ -123,7 +128,7 @@ typedef struct{
 }tar_entry_action_t;
 
 
-static int check_header_cheksum(tar_header_t *header){
+static int check_header_checksum(tar_header_t *header){
     int errno;
     int ret = checksum(header, sizeof(header)) != parse_octal_array(header->chksum, &errno);
     if(errno)
@@ -153,30 +158,40 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
     if(!f) Exit_Message("File %s not found", fileName);
     debug("file opened: %p", f);
 
-    size_t current_offset = ftell(f);
-    debug1("beginning stream position: %lu", current_offset);
+    debug1("beginning stream position: %lu", ftell(f));
     size_t file_size = fsize(f);
     debug1("file size: %lubytes - %lf blocks", file_size, file_size*1.0/BLOCK_BYTES);
 
+#define read_block() (fread(buffer.block.data, BLOCK_BYTES, 1, f) < 1)
+
     while(!feof(f)){
-        debug1("current stream position: %lu", current_offset);
+        debug1("current stream position: %lu", ftell(f));
 
         debug("starting fread");
-        if(fread(buffer.block.data, BLOCK_BYTES, 1, f) < 1){
+        if(read_block()){
             debug1("fread returned non1");
             break;
         }
+        if(is_end_block(&(buffer.block))){
+            if(!read_block() ){
+                Warn_Message("Only one of the two terminator zero-blocks present!");
+                break;
+            }
+            if(is_end_block(&(buffer.block)))
+                break;
+        }
 
         debug("finished fread");
-        size_t num_of_blocks = parse_octal_array(buffer.header_block.header.size, NULL);
-        debug1("num of blocks: %s - %lu", buffer.header_block.header.size, num_of_blocks);
+        size_t bytes_in_file = parse_octal_array(buffer.header_block.header.size, NULL);
+        size_t num_of_blocks = block_count_from_bytes(bytes_in_file);
+        debug1("bytes: %5lu -- %2lu (%s) blocks",bytes_in_file, num_of_blocks, buffer.header_block.header.size);
         
         debug("invoking the action");
         invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
 
-        fseek(f, (num_of_blocks-2)*BLOCK_BYTES, SEEK_SET);
+        fseek(f, (num_of_blocks)*BLOCK_BYTES, SEEK_CUR);
     }
-
+#undef read_block
 
     return 0;
 }
@@ -187,7 +202,7 @@ int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_in
         (void)ctx;
         (void)num_of_blocks;
         (void)block_supplier;
-        printf("%s ... %lu blocks\n", begin->header.name, num_of_blocks);
+        printf("%s ... %lu bytes\n", begin->header.name, num_of_blocks);
         return 0;
     }
 //option -t
@@ -239,6 +254,6 @@ int main(int argc, char **argv){
 void unused_funcs(void){
     (void)unused_funcs;
     (void)contents_lister;
-    (void)check_header_cheksum;
-    (void)isEndBlock;
+    (void)check_header_checksum;
+    (void)is_end_block;
 }
