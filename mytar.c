@@ -1,31 +1,36 @@
 #include<stdio.h>
 #include<stdint.h>
+#include<stdbool.h>
+#include<string.h>
+#include<stdlib.h>
+
+#define debug(...) //(fprintf(stderr, "\tD>> " __VA_ARGS__), fputc('\n', stderr))
+#define debug1(...) (fprintf(stderr, "\tD>> " __VA_ARGS__), fputc('\n', stderr))
+
+#define LEN(arr) (sizeof(arr)/sizeof(*(arr)))
+#define invoke0(func) ((func).function((func).context))
+#define invoke(func, ...) ((func).function((func).context, ## __VA_ARGS__))
+
+#define BLOCK_BYTES 512
+
+
+#define Exit_Message(...)(fprintf(stderr, __VA_ARGS__), exit(1))
+
+
+size_t fsize(FILE *f){
+    size_t current_pos = ftell(f);
+    fseek(f, 0, SEEK_END);
+    size_t ret = ftell(f);
+    fseek(f, current_pos, SEEK_SET);
+    return ret;
+}
+
 
 typedef struct{
-    char data[512];
+    char data[BLOCK_BYTES];
 } tar_block_t;
 
-typedef struct {
-    char name[100];
-    uint64_t mode,
-             uid,
-             gid;
-    char size[12],
-         mtime[12];
-    uint64_t chksum;
-    char typeflag;
-    char linkname[100];
-    char magic[6];
-    uint16_t version;
-    char uname[32],
-         gname[32];
-    uint64_t devmajor,
-             devminor;
-    char prefix[155];
-} __attribute__((packed)) tar_header_t;
-
-
-struct posix_header
+typedef struct 
 {                              /* byte offset */
   char name[100];               /*   0 */
   char mode[8];                 /* 100 */
@@ -44,39 +49,195 @@ struct posix_header
   char devminor[8];             /* 337 */
   char prefix[155];             /* 345 */
                                 /* 500 */
-};
+} tar_header_t;
 
 typedef struct {
     tar_header_t header;
-    char padding_[12];
+    char padding_[BLOCK_BYTES - sizeof(tar_header_t)];
 } tar_header_block_t;
 
 
-void print_offsets(){
-    struct posix_header *h = NULL;
-    printf("%ld -- %s\n", (size_t)(void*) &(h->name), "name");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->mode), "mode");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->uid), "uid");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->gid), "gid");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->size), "size");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->mtime), "mtime");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->chksum), "chksum");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->typeflag), "typeflag");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->linkname), "linkname");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->magic), "magic");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->version), "version");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->uname), "uname");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->gname), "gname");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->devmajor), "devmajor");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->devminor), "devminor");
-    printf("%ld -- %s\n", (size_t)(void*) &(h->prefix), "prefix");
+
+typedef char* string_t;
+typedef string_t *strings_list_t;
+
+
+
+typedef struct request request_t;
+
+typedef int (*user_action_t)(request_t *context);
+struct request {
+    string_t file_name;
+    bool isVerbose;
+    strings_list_t files;
+    user_action_t action;
+};
+
+
+
+
+
+
+
+
+static bool isEndBlock(const tar_block_t *block){
+    static const tar_block_t ZERO_BLOCK;
+
+    return memcmp(block, &ZERO_BLOCK, BLOCK_BYTES) == 0;
 }
 
-int main(void){
-    printf("posix header size:%lu\n\n", sizeof(struct posix_header));
-    printf("header size:%lu\n\n", sizeof(tar_header_t));
-    printf("header size padded:%lu\n\n", sizeof(tar_header_block_t));
-    printf("end size:%lu\n\n", sizeof(tar_block_t));
-    print_offsets();
+
+
+static int parse_octal(const char *c, size_t length, int *errno){
+    if(errno) *errno = 0;
+
+    int ret = 0;
+
+    for(; *c && length > 0; ++c, --length){
+        if(*c < '0' && *c > '8'){
+            if(errno) *errno = 1;
+            return -1;
+        }
+        ret *= 8;
+        ret += *c - '0';
+    }
+    return ret;
+}
+#define parse_octal_array(field, errno) parse_octal((field), LEN(field), errno) 
+
+static char checksum(void *arr, size_t length){
+    char ret = 0;
+    for(char *p = (char*)arr;length > 0; ++p, --length)
+        ret += *p;
+    return ret;
+}
+
+
+typedef struct{
+    tar_block_t *(*function)(void *context, size_t *block_size_bytes);
+    void *context;
+} tar_block_supplier_t;
+typedef struct{
+    int (*function)(void *context, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier);
+    void *context;
+}tar_entry_action_t;
+
+
+static int check_header_cheksum(tar_header_t *header){
+    int errno;
+    int ret = checksum(header, sizeof(header)) != parse_octal_array(header->chksum, &errno);
+    if(errno)
+        return 2;
+    return ret;
+}
+
+
+
+
+int iterate_archive(string_t fileName, string_t mode, strings_list_t names_to_include, tar_entry_action_t action){
+    (void)names_to_include;
+
+    debug("inside iterate_archive");
+
+    union{
+        tar_header_block_t header_block;
+        tar_block_t block;
+    } buffer;
+
+    tar_block_supplier_t block_supplier = {
+        .function = NULL, .context = NULL
+    };
+
+    debug("opening the file");
+    FILE *f = fopen(fileName, mode);
+    if(!f) Exit_Message("File %s not found", fileName);
+    debug("file opened: %p", f);
+
+    size_t current_offset = ftell(f);
+    debug1("beginning stream position: %lu", current_offset);
+    size_t file_size = fsize(f);
+    debug1("file size: %lubytes - %lf blocks", file_size, file_size*1.0/BLOCK_BYTES);
+
+    while(!feof(f)){
+        debug1("current stream position: %lu", current_offset);
+
+        debug("starting fread");
+        if(fread(buffer.block.data, BLOCK_BYTES, 1, f) < 1){
+            debug1("fread returned non1");
+            break;
+        }
+
+        debug("finished fread");
+        size_t num_of_blocks = parse_octal_array(buffer.header_block.header.size, NULL);
+        debug1("num of blocks: %s - %lu", buffer.header_block.header.size, num_of_blocks);
+        
+        debug("invoking the action");
+        invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
+
+        fseek(f, (num_of_blocks-2)*BLOCK_BYTES, SEEK_SET);
+    }
+
+
     return 0;
+}
+
+
+
+    static int contents_lister(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+        (void)ctx;
+        (void)num_of_blocks;
+        (void)block_supplier;
+        printf("%s ... %lu blocks\n", begin->header.name, num_of_blocks);
+        return 0;
+    }
+//option -t
+int list_contents_action(request_t *ctx){
+    (void)ctx;
+    tar_entry_action_t perform_listing = {
+        .function = contents_lister,
+        .context = NULL
+    };
+
+    debug("iterating archive");
+    return iterate_archive(ctx->file_name, "rb", NULL, perform_listing);
+}
+
+
+
+
+int main(int argc, char **argv){
+    (void)argc;
+    (void)argv;
+
+    request_t req = {
+        .action = list_contents_action,
+        .file_name = "./testfiles/arch.tar",
+        .files = NULL,
+        .isVerbose = false
+    };
+
+    list_contents_action(&req);
+
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void unused_funcs(void){
+    (void)unused_funcs;
+    (void)contents_lister;
+    (void)check_header_cheksum;
+    (void)isEndBlock;
 }

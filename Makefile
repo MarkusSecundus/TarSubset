@@ -1,5 +1,5 @@
 all: mytar.c
-	cc -o mytar mytar.c -Wall -Wextra -std=c99
+	cc -o mytar mytar.c -Wall -Wextra  -std=c99
 
 clean: 
-	rm tar
+	rm mytar
