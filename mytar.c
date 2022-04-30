@@ -200,6 +200,7 @@ int list_contents_action(request_t *ctx){
 
     debug("iterating archive");
     return iterate_archive(ctx->file_name, "rb", NULL, perform_listing);
+    ;
 }
 
 
