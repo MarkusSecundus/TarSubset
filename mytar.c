@@ -5,7 +5,8 @@
 #include<stdlib.h>
 
 #define debug(...) //(fprintf(stderr, "\tD>> " __VA_ARGS__), fputc('\n', stderr))
-#define debug1(...) (fprintf(stderr, "\tD>> " __VA_ARGS__), fputc('\n', stderr))
+#define debug1(...) (fprintf(stderr, "\tD1>> " __VA_ARGS__), fputc('\n', stderr))
+#define debug2(...) //(fprintf(stderr, "\tD2>> " __VA_ARGS__), fputc('\n', stderr))
 
 #define LEN(arr) (sizeof(arr)/sizeof(*(arr)))
 #define invoke0(func) ((func).function((func).context))
@@ -185,7 +186,7 @@ static int check_header_checksum(tar_header_t *header){
     }
 
 int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action){
-
+    debug2("Starting archive iteration");
     union{
         tar_header_block_t header_block;
         tar_block_t block;
@@ -250,7 +251,8 @@ int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t
     struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
     
     bool *flag = ctx->files_to_include_was_encountered_flags;
-    for(strings_list_t s = ctx->files_to_include; s ; ++s, ++flag){
+    for(strings_list_t s = ctx->files_to_include; *s ; ++s, ++flag){
+        //debug1("Iteration p:%p,  %s - %s",s, *s, begin->header.name);
         if(strcmp(*s, begin->header.name)==0){
             if(*flag)
                 Warn_Message("File '%s' encountered for more then first time!", *s);
@@ -288,8 +290,10 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
     int ret = iterate_archive(fileName, mode, decorated_action);
 
     for(size_t t = 0; t< flag_buffer_size ; ++t){
-        Warn_Message("%s: Not found in archive", files_to_include[t]);
-        if(!ret) ret = -1;
+        if(!flag_buffer[t]){
+            Warn_Message("%s: Not found in archive\n", files_to_include[t]);
+            if(!ret) ret = -1;
+        }
     }
 
     free(flag_buffer);
@@ -370,16 +374,16 @@ int validate_request(const request_t *req){
 
     if(!req->file_name){
         error = -1;
-        Warn_Message("No filename provided!");
+        Warn_Message("No filename provided!\n");
     }
     if(!req->action){
         error = -1;
-        Warn_Message("No action provided!");
+        Warn_Message("No action provided!\n");
     }
         
 
     if(error)
-        Exit_Message("Exiting");
+        Exit_Message("Exiting\n");
     return error;
 }
 
