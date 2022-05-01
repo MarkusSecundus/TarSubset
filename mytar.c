@@ -166,6 +166,10 @@ static void printout_header_info(tar_header_t *header, FILE *output, bool is_ver
 }
 
 
+
+int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action){
+    
+    //DEFINITIONS:
     struct supplier_context{
         tar_block_t *buffer;
         size_t entry_bytes_remaining;
@@ -190,8 +194,7 @@ static void printout_header_info(tar_header_t *header, FILE *output, bool is_ver
         return ctx->buffer;
     }
 
-int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action){
-    debug2("Starting archive iteration");
+    //IMPLEMENTATION:
     union{
         tar_header_block_t header_block;
         tar_block_t block;
@@ -244,31 +247,34 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
 }
 
 
+
+
+
+
+int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
+    
     struct only_whitelist_files_decorator_context{
         tar_entry_action_t inner_action;
         strings_list_t files_to_include;
         bool *files_to_include_was_encountered_flags;
     };
-
-
-
-int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
-    struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
     
-    bool *flag = ctx->files_to_include_was_encountered_flags;
-    for(strings_list_t s = ctx->files_to_include; *s ; ++s, ++flag){
-        if(strcmp(*s, begin->header.name)==0){
-            if(*flag)
-                Warn_Message("File '%s' encountered for more then first time!", *s);
-            *flag = true;
-            return invoke(ctx->inner_action, begin, num_of_blocks, block_supplier);
+    int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+        struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
+        
+        bool *flag = ctx->files_to_include_was_encountered_flags;
+        for(strings_list_t s = ctx->files_to_include; *s ; ++s, ++flag){
+            if(strcmp(*s, begin->header.name)==0){
+                if(*flag)
+                    Warn_Message("File '%s' encountered for more then first time!", *s);
+                *flag = true;
+                return invoke(ctx->inner_action, begin, num_of_blocks, block_supplier);
+            }
         }
+        return 0;
     }
-    return 0;
-}
 
-int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
-    
+
     size_t files_count;
     if(!files_to_include || !(files_count = count_to_nil(files_to_include)))
         return iterate_archive(fileName, mode, action);
@@ -326,12 +332,16 @@ int list_contents_action(request_t *ctx){
 
 
 
-    static int extract_action__extractor(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+int extract_action(request_t *ctx){
+    
+    int impl(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)ctx;
         (void)num_of_blocks;
 
         int ret = 0;
 
+
+        printout_header_info(&(begin->header), stdout, false);
 
         char *name = begin->header.name;
         FILE *output = fopen(name, "wb");
@@ -348,16 +358,14 @@ int list_contents_action(request_t *ctx){
                     break;
                 }
             }}
-
-            fclose(output);
-            printout_header_info(&(begin->header), stdout, false);
         }
+        fclose(output);
         return ret;
     }
-int extract_action(request_t *ctx){
+
 
     tar_entry_action_t perform_extraction = {
-        .function = extract_action__extractor,
+        .function = impl,
         .context = NULL
     };
 
