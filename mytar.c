@@ -232,6 +232,7 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
         fseek(f, block_begin_pos + num_of_blocks*BLOCK_BYTES, SEEK_SET);
     }
     #undef read_block
+    fclose(f);
 
     return 0;
 }
@@ -242,6 +243,8 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
         strings_list_t files_to_include;
         bool *files_to_include_was_encountered_flags;
     };
+
+
 
 int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
     struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
@@ -265,16 +268,10 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
         return iterate_archive(fileName, mode, action);
     size_t flag_buffer_size = files_count;
 
-    size_t bytes_to_stackalloc = (flag_buffer_size*sizeof(bool)) > MAX_BYTES_TO_STACKALLOC ? 0 : flag_buffer_size;
-    bool stackallocked[bytes_to_stackalloc];
-    bool *flag_buffer;
-    if(bytes_to_stackalloc){
-        flag_buffer = stackallocked;
-    }
-    else{
-        if(!(flag_buffer = malloc(flag_buffer_size*sizeof(bool))))
-            Exit_Message("Out of memory!");
-    }
+    bool *flag_buffer = malloc(flag_buffer_size*sizeof(bool));
+    if(!flag_buffer)
+        Exit_Message("Out of memory!");
+
     for(size_t t = 0; t< flag_buffer_size ; ++t)   
         flag_buffer[t] = 0;
     
@@ -294,6 +291,8 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
         Warn_Message("%s: Not found in archive", files_to_include[t]);
         if(!ret) ret = -1;
     }
+
+    free(flag_buffer);
 
     return ret;
 }
@@ -327,40 +326,72 @@ int list_contents_action(request_t *ctx){
 
 
 request_t parse_args(int argc, char **argv){
-    request_t ret;
+    request_t ret = {
+        .action = NULL,
+        .file_name = NULL,
+        .isVerbose = false,
+        .files = argv
+    };
 
 
+    int files_end_index = 0;
     for(int t = 1; t<argc ;++t){
         char *arg = argv[t];
         if(*arg == '-'){
-
+            switch(arg[1]){
+                case 'f':
+                    if(arg[2]){
+                        ret.file_name = arg + 2;
+                    }else if((arg = argv[++t])){
+                        ret.file_name = arg;
+                    }else{
+                        Exit_Message("Expected a filename but none provided!");
+                    }
+                    break;
+                case 't':
+                    ret.action = list_contents_action;
+                    break;
+                case 'v':
+                    ret.isVerbose = true;
+                    break;
+            }
         }else{
-
+            ret.files[files_end_index++] = arg;
         }
     }
 
+    ret.files[files_end_index++] = NULL;
     return ret;
 }
 
 
+int validate_request(const request_t *req){
+    int error = 0;
 
+    if(!req->file_name){
+        error = -1;
+        Warn_Message("No filename provided!");
+    }
+    if(!req->action){
+        error = -1;
+        Warn_Message("No action provided!");
+    }
+        
+
+    if(error)
+        Exit_Message("Exiting");
+    return error;
+}
 
 
 int main(int argc, char **argv){
     (void)argc;
     (void)argv;
 
-    request_t req = {
-        .action = list_contents_action,
-        .file_name = "./testfiles/arch2.tar",
-        .files = NULL,
-        .isVerbose = false
-    };
+    request_t req = parse_args(argc, argv);
+    validate_request(&req);
 
-    req = parse_args(argc, argv);
-
-
-    //req.action(&req);
+    req.action(&req);
 
     return 0;
 }
