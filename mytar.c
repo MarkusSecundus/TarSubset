@@ -334,14 +334,19 @@ int list_contents_action(request_t *ctx){
 
 int extract_action(request_t *ctx){
     
-    int impl(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
-        (void)ctx;
+    typedef struct {
+        bool is_verbose;
+    } impl_context; 
+
+    int impl(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)num_of_blocks;
 
+        impl_context *ctx = (impl_context*)ctx_;
         int ret = 0;
 
 
-        printout_header_info(&(begin->header), stdout, false);
+        if(ctx->is_verbose)
+            printout_header_info(&(begin->header), stdout, false);
 
         char *name = begin->header.name;
         FILE *output = fopen(name, "wb");
@@ -408,6 +413,9 @@ request_t parse_args(int argc, char **argv){
                     break;
                 case 'v':
                     ret.isVerbose = true;
+                    break;
+                default:
+                    Warn_Message("Unknown option: -%c", arg[1]);
                     break;
             }
         }else{
