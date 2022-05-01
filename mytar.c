@@ -160,6 +160,11 @@ static int check_header_checksum(tar_header_t *header){
     return ret;
 }
 
+static void printout_header_info(tar_header_t *header, FILE *output, bool is_verbose){
+    (void)is_verbose;
+    fprintf(output, "%s\n", header->name);
+}
+
 
     struct supplier_context{
         tar_block_t *buffer;
@@ -252,7 +257,6 @@ int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t
     
     bool *flag = ctx->files_to_include_was_encountered_flags;
     for(strings_list_t s = ctx->files_to_include; *s ; ++s, ++flag){
-        //debug1("Iteration p:%p,  %s - %s",s, *s, begin->header.name);
         if(strcmp(*s, begin->header.name)==0){
             if(*flag)
                 Warn_Message("File '%s' encountered for more then first time!", *s);
@@ -302,7 +306,7 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
 }
 
 
-    static int contents_lister(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+    static int list_contents_action__lister(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)ctx;
         (void)num_of_blocks;
         (void)block_supplier;
@@ -312,9 +316,8 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
     }
 //option -t
 int list_contents_action(request_t *ctx){
-    (void)ctx;
     tar_entry_action_t perform_listing = {
-        .function = contents_lister,
+        .function = list_contents_action__lister,
         .context = NULL
     };
 
@@ -323,6 +326,43 @@ int list_contents_action(request_t *ctx){
 
 
 
+    static int extract_action__extractor(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+        (void)ctx;
+        (void)num_of_blocks;
+
+        int ret = 0;
+
+
+        char *name = begin->header.name;
+        FILE *output = fopen(name, "wb");
+        if(!output){
+            Warn_Message("Cannot open file %s for write!\n", name);
+            ret = -1;
+        }
+        else{
+            {size_t block_size = 0;
+            for(tar_block_t *it; (it = invoke(block_supplier, &block_size)); ){
+                if(fwrite(&(it->data), block_size, 1, output) != 1){
+                    Warn_Message("Error writing the file %s\n", name);
+                    ret = -1;
+                    break;
+                }
+            }}
+
+            fclose(output);
+            printout_header_info(&(begin->header), stdout, false);
+        }
+        return ret;
+    }
+int extract_action(request_t *ctx){
+
+    tar_entry_action_t perform_extraction = {
+        .function = extract_action__extractor,
+        .context = NULL
+    };
+
+    return iterate_archive_with_whitelist_decorator(ctx->file_name, "rb", perform_extraction, ctx->files);
+}
 
 
 
@@ -354,6 +394,9 @@ request_t parse_args(int argc, char **argv){
                     break;
                 case 't':
                     ret.action = list_contents_action;
+                    break;
+                case 'x':
+                    ret.action = extract_action;
                     break;
                 case 'v':
                     ret.isVerbose = true;
@@ -416,7 +459,5 @@ int main(int argc, char **argv){
 
 void unused_funcs(void){
     (void)unused_funcs;
-    (void)contents_lister;
     (void)check_header_checksum;
-    (void)is_end_block;
 }
