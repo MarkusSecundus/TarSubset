@@ -14,14 +14,23 @@
 #define min(a,b) ((a) <= (b) ? (a) : (b))
 #define max(a,b) ((a) >= (b) ? (a) : (b))
 
+#define var __auto_type
 
 #define count_to_nil(arr)({\
     size_t ret = 0;\
-    for(__auto_type p = arr;*p;++p)++ret;\
+    for(var _count_to_nill_ptr___ = arr;*_count_to_nill_ptr___;++_count_to_nill_ptr___)++ret;\
     ret;\
 })
 
-
+#define swap(a,b)({\
+    var _swap_left_ref__ = &(a);\
+    var _swap_right_ref__ = &(b);\
+    \
+    var _swap_temp__ = *_swap_left_ref__;\
+    *_swap_left_ref__ = *_swap_right_ref__;\
+    *_swap_right_ref__ = _swap_temp__;\
+    (void)0;\
+})
 
 
 #define Exit_Message(...) (fprintf(stderr, __VA_ARGS__), exit(1))
@@ -312,6 +321,31 @@ int list_contents_action(request_t *ctx){
 
 
 
+
+
+
+
+
+request_t parse_args(int argc, char **argv){
+    request_t ret;
+
+
+    for(int t = 1; t<argc ;++t){
+        char *arg = argv[t];
+        if(*arg == '-'){
+
+        }else{
+
+        }
+    }
+
+    return ret;
+}
+
+
+
+
+
 int main(int argc, char **argv){
     (void)argc;
     (void)argv;
@@ -323,7 +357,10 @@ int main(int argc, char **argv){
         .isVerbose = false
     };
 
-    list_contents_action(&req);
+    req = parse_args(argc, argv);
+
+
+    //req.action(&req);
 
     return 0;
 }
