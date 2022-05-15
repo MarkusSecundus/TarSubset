@@ -45,8 +45,6 @@ size_t fsize(FILE *f){
     return ret;
 }
 
-#define MAX_BYTES_TO_STACKALLOC 1024
-
 
 
 
