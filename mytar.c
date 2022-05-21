@@ -47,7 +47,6 @@ typedef string_t *strings_list_t;
 
 
 #define BLOCK_BYTES 512
-#define HEADER_BYTES 500
 
 
 typedef struct{
