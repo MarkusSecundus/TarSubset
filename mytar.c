@@ -135,7 +135,6 @@ static unsigned int parse_octal(const char *c, size_t length, int *errno){
 static unsigned int checksum(void *arr, void *end_){
     unsigned int ret = 0;
     unsigned char *p = arr, *end = end_;
-    debug2("Checksum: begin: %p - end: %p, diff: %lu", p, end, end-p);
     for(; p<end; ++p)
         ret += *p;
     return ret;
