@@ -10,7 +10,6 @@
 #define debug2(...) //(fprintf(stderr, "\tD2>> " __VA_ARGS__), fputc('\n', stderr))
 
 #define LEN(arr) (sizeof(arr)/sizeof(*(arr)))
-#define invoke0(func) ((func).function((func).context))
 #define invoke(func, ...) ((func).function((func).context, ## __VA_ARGS__))
 
 #define min(a,b) ((a) <= (b) ? (a) : (b))
