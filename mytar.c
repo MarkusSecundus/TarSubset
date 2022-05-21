@@ -81,6 +81,7 @@ typedef struct
 #define REGTYPE  '0'            /* regular file */
 #define AREGTYPE '\0'           /* regular file */
 #define TMAGIC   "ustar"        /* ustar and a null */
+#define TOLDMAGIC   "ustar  "        /* ustar and a null */
 
 typedef struct {
     tar_header_t header;
@@ -152,6 +153,10 @@ typedef struct{
 
 
 
+static void This_does_not_look_like_a_tar_archive(){
+    Warn("This does not look like a tar archive");
+    Exit(2, "Exiting with failure status due to previous errors");
+}
 
 static void validate_checksum(tar_header_t *header){
     int errno = 0;
@@ -160,10 +165,8 @@ static void validate_checksum(tar_header_t *header){
         Exit(2, "Wrong checksum");
 
     var calculated_checksum = 256 + checksum(header, &(header->chksum)) + checksum(((void*)&(header->chksum)) + LEN(header->chksum), ((void*)header) + sizeof(tar_header_t));  //TODO: find out why adding 256 is needed!
-    if(calculated_checksum != supposed_checksum){
-        Warn("This does not look like a tar archive");
-        Exit(2, "Exiting with failure status due to previous errors");
-    }
+    if(calculated_checksum != supposed_checksum)
+        This_does_not_look_like_a_tar_archive();
 }
 
 
@@ -172,8 +175,8 @@ static void validate_header(tar_header_t *header){
         Exit(2, "Unsupported header type: %d", header->typeflag);
     
     (void)checksum;
-    if(!memcmp(header->magic, TMAGIC, LEN(header->magic)) != 0)
-        Exit(2, "Wrong magic number");
+    if(memcmp(header->magic, TMAGIC, LEN(header->magic)) && memcmp(header->magic, TOLDMAGIC, LEN(header->magic)))
+        This_does_not_look_like_a_tar_archive();
 
     validate_checksum(header);
 }
@@ -208,7 +211,7 @@ static void validate_header(tar_header_t *header){
     }
 
 
-int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action){
+int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action){
     
 
     union{
@@ -218,8 +221,8 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
     tar_block_t contents_buffer;
 
 
-    FILE *f = fopen(fileName, mode);
-    if(!f) Exit(2, "File %s not found", fileName);
+    FILE *f = fopen(file_name, mode);
+    if(!f) Exit(2, "File %s not found", file_name);
 
     struct supplier_context supplier_context = {
         .buffer = &(contents_buffer),
@@ -320,14 +323,14 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
         return 0;
     }
 
-int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
+int iterate_archive_with_whitelist_decorator(string_t file_name, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
     
     
 
 
     size_t files_count;
     if(!files_to_include || !(files_count = count_to_nil(files_to_include)))
-        return iterate_archive(fileName, mode, action);
+        return iterate_archive(file_name, mode, action);
     size_t flag_buffer_size = files_count;
 
     bool *flag_buffer = alloc_mem(flag_buffer_size*sizeof(bool));
@@ -345,7 +348,7 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
         .context = &ctx
     };
 
-    int ret = iterate_archive(fileName, mode, decorated_action);
+    int ret = iterate_archive(file_name, mode, decorated_action);
 
     for(size_t t = 0; t< flag_buffer_size ; ++t){
         if(!flag_buffer[t]){
