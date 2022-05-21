@@ -307,12 +307,15 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
     return ret;
 }
 
+void print_header_info(tar_header_block_t *block){
+        fprintf(stderr, "%s\n", block->header.name);
+}
 
     static int list_contents_action__lister(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)ctx;
         (void)num_of_blocks;
         (void)block_supplier;
-        printf("%s\n", begin->header.name);
+        print_header_info(begin);
 
         return 0;
     }
@@ -338,7 +341,7 @@ int list_contents_action(request_t *ctx){
 
 
         if(ctx->is_verbose)
-            printf("%s\n", begin->header.name);
+            print_header_info(begin);
 
         char *name = begin->header.name;
         FILE *output = fopen(name, "wb");
