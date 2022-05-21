@@ -164,7 +164,9 @@ static void validate_checksum(tar_header_t *header){
     if(errno)
         Exit(2, "Wrong checksum");
 
-    var calculated_checksum = 256 + checksum(header, &(header->chksum)) + checksum(((void*)&(header->chksum)) + LEN(header->chksum), ((void*)header) + sizeof(tar_header_t));  //TODO: find out why adding 256 is needed!
+    var calculated_checksum = 256  //TODO: find out why adding 256 is needed!
+                            + checksum(header, &(header->chksum)) 
+                            + checksum(((void*)&(header->chksum)) + LEN(header->chksum), ((void*)header) + sizeof(tar_header_t));
     if(calculated_checksum != supposed_checksum)
         This_does_not_look_like_a_tar_archive();
 }
