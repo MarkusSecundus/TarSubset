@@ -23,16 +23,6 @@
     ret;\
 })
 
-#define swap(a,b)({\
-    var _swap_left_ref__ = &(a);\
-    var _swap_right_ref__ = &(b);\
-    \
-    var _swap_temp__ = *_swap_left_ref__;\
-    *_swap_left_ref__ = *_swap_right_ref__;\
-    *_swap_right_ref__ = _swap_temp__;\
-    (void)0;\
-})
-
 
 #define Exit_Message(...) (fprintf(stderr, __VA_ARGS__), exit(1))
 #define Warn_Message(...) (fprintf(stderr, __VA_ARGS__))
@@ -158,21 +148,17 @@ static int check_header_checksum(tar_header_t *header){
     return ret;
 }
 
-static void printout_header_info(tar_header_t *header, FILE *output, bool is_verbose){
-    (void)is_verbose;
-    fprintf(output, "%s\n", header->name);
-}
 
 
-
-int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action){
-    
-    //DEFINITIONS:
     struct supplier_context{
         tar_block_t *buffer;
         size_t entry_bytes_remaining;
         FILE *file;
     };
+static void printout_header_info(tar_header_t *header, FILE *output, bool is_verbose){
+    (void)is_verbose;
+    fprintf(output, "%s\n", header->name);
+}
 
     tar_block_t *iterate_archive_supplier(void *context_, size_t *block_size_bytes){
         struct supplier_context *ctx = (struct supplier_context *)context_;
@@ -192,7 +178,10 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
         return ctx->buffer;
     }
 
-    //IMPLEMENTATION:
+
+int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action){
+    
+
     union{
         tar_header_block_t header_block;
         tar_block_t block;
@@ -248,15 +237,11 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
 
 
 
-
-int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
-    
     struct only_whitelist_files_decorator_context{
         tar_entry_action_t inner_action;
         strings_list_t files_to_include;
         bool *files_to_include_was_encountered_flags;
     };
-    
     int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
         
@@ -271,6 +256,10 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
         }
         return 0;
     }
+
+int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
+    
+    
 
 
     size_t files_count;
@@ -328,18 +317,14 @@ int list_contents_action(request_t *ctx){
     return iterate_archive_with_whitelist_decorator(ctx->file_name, "rb", perform_listing, ctx->files);
 }
 
-
-
-int extract_action(request_t *ctx){
-    
     typedef struct {
         bool is_verbose;
-    } impl_context; 
+    } extract_action_impl_context; 
 
-    int impl(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+    int extract_action_impl(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)num_of_blocks;
 
-        impl_context *ctx = (impl_context*)ctx_;
+        extract_action_impl_context *ctx = (extract_action_impl_context*)ctx_;
         int ret = 0;
 
 
@@ -366,9 +351,10 @@ int extract_action(request_t *ctx){
         return ret;
     }
 
-
+int extract_action(request_t *ctx){
+    
     tar_entry_action_t perform_extraction = {
-        .function = impl,
+        .function = extract_action_impl,
         .context = NULL
     };
 
