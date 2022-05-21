@@ -157,6 +157,10 @@ static void This_does_not_look_like_a_tar_archive(){
     Warn("This does not look like a tar archive");
     Exit(2, "Exiting with failure status due to previous errors");
 }
+static void Unexpected_EOF_in_archive(){
+    Warn("Unexpected EOF in archive");
+    Exit(2, "Error is not recoverable: exiting now");
+}
 
 static void validate_checksum(tar_header_t *header){
     int errno = 0;
@@ -201,10 +205,8 @@ static void validate_header(tar_header_t *header){
 
         size_t to_read = min(BLOCK_BYTES, ctx->entry_bytes_remaining);
         size_t did_read = fread(&(ctx->buffer->data),1, to_read, ctx->file);
-        if(did_read < to_read){
-            Warn("Unexpected EOF in archive");
-            Exit(2, "Error is not recoverable: exiting now");
-        }
+        if(did_read < to_read)
+            Unexpected_EOF_in_archive();
         ctx->entry_bytes_remaining -= did_read;
 
         if(block_size_bytes) *block_size_bytes = did_read;
@@ -266,10 +268,8 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
         ret |= invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
 
 
-        if(bytes_in_file > (file_size - block_begin_pos)){
-            Warn("Unexpected EOF in archive");
-            Exit(2, "Error is not recoverable: exiting now");
-        }
+        if(bytes_in_file > (file_size - block_begin_pos))
+            Unexpected_EOF_in_archive();
 
         fseek(f, block_begin_pos + num_of_blocks*BLOCK_BYTES, SEEK_SET);
     }
