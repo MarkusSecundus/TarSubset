@@ -160,10 +160,6 @@ static int check_header_checksum(tar_header_t *header){
         size_t entry_bytes_remaining;
         FILE *file;
     };
-static void printout_header_info(tar_header_t *header, FILE *output, bool is_verbose){
-    (void)is_verbose;
-    fprintf(output, "%s\n", header->name);
-}
 
     tar_block_t *iterate_archive_supplier(void *context_, size_t *block_size_bytes){
         struct supplier_context *ctx = (struct supplier_context *)context_;
@@ -342,7 +338,7 @@ int list_contents_action(request_t *ctx){
 
 
         if(ctx->is_verbose)
-            printout_header_info(&(begin->header), stdout, false);
+            printf("%s\n", begin->header.name);
 
         char *name = begin->header.name;
         FILE *output = fopen(name, "wb");
