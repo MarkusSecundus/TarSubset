@@ -209,6 +209,8 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
 
     const size_t file_size = fsize(f);
 
+    int ret = 0;
+
     #define read_block() (fread(buffer.block.data, BLOCK_BYTES, 1, f) >= 1)
 
     while(!feof(f)){
@@ -231,7 +233,7 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
 
 
         supplier_context.entry_bytes_remaining = bytes_in_file;
-        invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
+        ret |= invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
 
         if(bytes_in_file > (file_size - block_begin_pos)){
             Warn("Unexpected EOF in archive");
@@ -243,7 +245,7 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
     #undef read_block
     fclose(f);
 
-    return 0;
+    return ret;
 }
 
 
