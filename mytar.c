@@ -44,6 +44,7 @@ void * alloc_mem(size_t size){
 
 
 #define BLOCK_BYTES 512
+#define HEADER_BYTES 500
 
 
 typedef struct{
@@ -75,6 +76,7 @@ typedef struct
 
 #define REGTYPE  '0'            /* regular file */
 #define AREGTYPE '\0'           /* regular file */
+#define TMAGIC   "ustar"        /* ustar and a null */
 
 typedef struct {
     tar_header_t header;
@@ -113,10 +115,10 @@ static bool is_end_block(const tar_block_t *block){
 
 
 
-static int parse_octal(const char *c, size_t length, int *errno){
+static unsigned int parse_octal(const char *c, size_t length, int *errno){
     if(errno) *errno = 0;
 
-    int ret = 0;
+    unsigned int ret = 0;
 
     for(; *c && length > 0; ++c, --length){
         if(*c < '0' && *c > '8'){
@@ -130,9 +132,9 @@ static int parse_octal(const char *c, size_t length, int *errno){
 }
 #define parse_octal_array(field, errno) parse_octal((field), LEN(field), errno) 
 
-static int checksum(void *arr, size_t length){
-    int ret = 0;
-    for(unsigned char *p = (unsigned char*)arr; length > 0; ++p, --length)
+static unsigned int checksum(void *arr, size_t length){
+    unsigned int ret = 0;
+    for(unsigned char *p = (unsigned char*)arr; length-- > 0; ++p)
         ret += *p;
     return ret;
 }
@@ -148,18 +150,38 @@ typedef struct{
 }tar_entry_action_t;
 
 
-static int check_header_checksum(tar_header_t *header){
-    int errno;
-    int ret = checksum(header, sizeof(header)) != parse_octal_array(header->chksum, &errno);
+
+
+static void validate_checksum(tar_header_t *header){
+    int errno = 0;
+    var supposed_checksum = parse_octal_array(header->chksum, &errno);
     if(errno)
-        return 2;
-    return ret;
+        Exit(2, "Wrong checksum");
+
+    uint64_t *checksum_ptr = (uint64_t*) (&header->chksum);
+    var checksum_field_original = *checksum_ptr;
+    *checksum_ptr = 0;
+
+    var calculated_checksum = 256+ checksum(header, sizeof(tar_block_t));
+    if(calculated_checksum != supposed_checksum){
+        Warn("This does not look like a tar archive");
+        Exit(2, "Exiting with failure status due to previous errors");
+    }
+
+    *checksum_ptr = checksum_field_original;
 }
 
 
+static void validate_header(tar_header_t *header){
+    if(header->typeflag != REGTYPE && header->typeflag != AREGTYPE)
+        Exit(2, "Unsupported header type: %d", header->typeflag);
+    
+    (void)checksum;
+    if(!memcmp(header->magic, TMAGIC, 6) != 0)
+        Exit(2, "Wrong magic number");
 
-
-
+    validate_checksum(header);
+}
 
 
 
@@ -179,8 +201,10 @@ static int check_header_checksum(tar_header_t *header){
 
         size_t to_read = min(BLOCK_BYTES, ctx->entry_bytes_remaining);
         size_t did_read = fread(&(ctx->buffer->data),1, to_read, ctx->file);
-        if(did_read < to_read)
-            errx(152, "Something went terribly wrong with reading the file!\n");
+        if(did_read < to_read){
+            Warn("Unexpected EOF in archive");
+            Exit(2, "Error is not recoverable: exiting now");
+        }
         ctx->entry_bytes_remaining -= did_read;
 
         if(block_size_bytes) *block_size_bytes = did_read;
@@ -236,8 +260,7 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
         size_t bytes_in_file = parse_octal_array(buffer.header_block.header.size, NULL);
         size_t num_of_blocks = block_count_from_bytes(bytes_in_file);
 
-        if(buffer.header_block.header.typeflag != REGTYPE && buffer.header_block.header.typeflag != AREGTYPE)
-            Exit(2, "Unsupported header type: %d", buffer.header_block.header.typeflag);
+        validate_header(&(buffer.header_block.header));
 
         supplier_context.entry_bytes_remaining = bytes_in_file;
         ret |= invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
@@ -398,10 +421,13 @@ int list_contents_action(request_t *ctx){
     }
 
 int extract_action(request_t *ctx){
-    
+    extract_action_impl_context action_ctx={
+        .is_verbose = ctx->isVerbose
+    };
+
     tar_entry_action_t perform_extraction = {
         .function = extract_action_impl,
-        .context = NULL
+        .context = &action_ctx
     };
 
     return iterate_archive_with_whitelist_decorator(ctx->file_name, "rb", perform_extraction, ctx->files);
@@ -484,23 +510,4 @@ int main(int argc, char **argv){
     var ret = req.action(&req);
     if(ret) Exit(ret, "Exiting with failure status due to previous errors");
     return ret;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-void unused_funcs(void){
-    (void)unused_funcs;
-    (void)check_header_checksum;
 }
