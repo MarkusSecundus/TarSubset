@@ -3,6 +3,7 @@
 #include<stdbool.h>
 #include<string.h>
 #include<stdlib.h>
+#include<err.h>
 
 #define debug(...) //(fprintf(stderr, "\tD>> " __VA_ARGS__), fputc('\n', stderr))
 #define debug1(...) (fprintf(stderr, "\tD1>> " __VA_ARGS__), fputc('\n', stderr))
@@ -24,8 +25,8 @@
 })
 
 
-#define Exit_Message(...) (fprintf(stderr, __VA_ARGS__), exit(1))
-#define Warn_Message(...) (fprintf(stderr, __VA_ARGS__))
+#define Exit(errno, ...) (errx(errno, __VA_ARGS__))
+#define Warn(...) (warnx(__VA_ARGS__))
 
 size_t fsize(FILE *f){
     size_t block_begin_pos = ftell(f);
@@ -35,7 +36,11 @@ size_t fsize(FILE *f){
     return ret;
 }
 
-
+void * alloc_mem(size_t size){
+    var ret = malloc(size);
+    if(!ret) err(143, "Out of memory!");
+    return ret;
+}
 
 
 #define BLOCK_BYTES 512
@@ -170,7 +175,7 @@ static void printout_header_info(tar_header_t *header, FILE *output, bool is_ver
         size_t to_read = min(BLOCK_BYTES, ctx->entry_bytes_remaining);
         size_t did_read = fread(&(ctx->buffer->data),1, to_read, ctx->file);
         if(did_read < to_read)
-            Exit_Message("Something went terribly wrong with reading the file!\n");
+            errx(152, "Something went terribly wrong with reading the file!\n");
         ctx->entry_bytes_remaining -= did_read;
 
         if(block_size_bytes) *block_size_bytes = did_read;
@@ -190,7 +195,7 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
 
 
     FILE *f = fopen(fileName, mode);
-    if(!f) Exit_Message("File %s not found", fileName);
+    if(!f) Exit(2, "File %s not found", fileName);
 
     struct supplier_context supplier_context = {
         .buffer = &(contents_buffer),
@@ -202,6 +207,8 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
     };
 
 
+    const size_t file_size = fsize(f);
+
     #define read_block() (fread(buffer.block.data, BLOCK_BYTES, 1, f) >= 1)
 
     while(!feof(f)){
@@ -209,8 +216,9 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
             break;
         }
         if(is_end_block(&(buffer.block))){
-            if(!read_block() ){
-                Warn_Message("Only one of the two terminator zero-blocks present!");
+            size_t zero_block_num = block_count_from_bytes(ftell(f));
+            if(!read_block() || !is_end_block(&(buffer.block))){
+                Warn("A lone zero block at %lu", zero_block_num);
                 break;
             }
             if(is_end_block(&(buffer.block)))
@@ -224,6 +232,11 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
 
         supplier_context.entry_bytes_remaining = bytes_in_file;
         invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
+
+        if(bytes_in_file > (file_size - block_begin_pos)){
+            Warn("Unexpected EOF in archive");
+            Exit(2, "Error is not recoverable: exiting now");
+        }
 
         fseek(f, block_begin_pos + num_of_blocks*BLOCK_BYTES, SEEK_SET);
     }
@@ -249,7 +262,7 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
         for(strings_list_t s = ctx->files_to_include; *s ; ++s, ++flag){
             if(strcmp(*s, begin->header.name)==0){
                 if(*flag)
-                    Warn_Message("File '%s' encountered for more then first time!", *s);
+                    Warn("File '%s' encountered for more then first time!", *s);
                 *flag = true;
                 return invoke(ctx->inner_action, begin, num_of_blocks, block_supplier);
             }
@@ -267,9 +280,7 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
         return iterate_archive(fileName, mode, action);
     size_t flag_buffer_size = files_count;
 
-    bool *flag_buffer = malloc(flag_buffer_size*sizeof(bool));
-    if(!flag_buffer)
-        Exit_Message("Out of memory!");
+    bool *flag_buffer = alloc_mem(flag_buffer_size*sizeof(bool));
 
     for(size_t t = 0; t< flag_buffer_size ; ++t)   
         flag_buffer[t] = 0;
@@ -288,8 +299,8 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
 
     for(size_t t = 0; t< flag_buffer_size ; ++t){
         if(!flag_buffer[t]){
-            Warn_Message("%s: Not found in archive\n", files_to_include[t]);
-            if(!ret) ret = -1;
+            Warn("%s: Not found in archive", files_to_include[t]);
+            if(!ret) ret = 2;
         }
     }
 
@@ -303,7 +314,7 @@ int iterate_archive_with_whitelist_decorator(string_t fileName, string_t mode, t
         (void)ctx;
         (void)num_of_blocks;
         (void)block_supplier;
-        printf("%s ... %lu blocks\n", begin->header.name, num_of_blocks);
+        printf("%s\n", begin->header.name);
 
         return 0;
     }
@@ -334,14 +345,14 @@ int list_contents_action(request_t *ctx){
         char *name = begin->header.name;
         FILE *output = fopen(name, "wb");
         if(!output){
-            Warn_Message("Cannot open file %s for write!\n", name);
+            Warn("Cannot open file %s for write!", name);
             ret = -1;
         }
         else{
             {size_t block_size = 0;
             for(tar_block_t *it; (it = invoke(block_supplier, &block_size)); ){
                 if(fwrite(&(it->data), block_size, 1, output) != 1){
-                    Warn_Message("Error writing the file %s\n", name);
+                    Warn("Error writing the file %s", name);
                     ret = -1;
                     break;
                 }
@@ -386,7 +397,7 @@ request_t parse_args(int argc, char **argv){
                     }else if((arg = argv[++t])){
                         ret.file_name = arg;
                     }else{
-                        Exit_Message("Expected a filename but none provided!");
+                        errx(2, "Expected a filename but none provided!");
                     }
                     break;
                 case 't':
@@ -399,7 +410,7 @@ request_t parse_args(int argc, char **argv){
                     ret.isVerbose = true;
                     break;
                 default:
-                    Warn_Message("Unknown option: -%c", arg[1]);
+                    Warn("Unknown option: -%c", arg[1]);
                     break;
             }
         }else{
@@ -416,31 +427,28 @@ int validate_request(const request_t *req){
     int error = 0;
 
     if(!req->file_name){
-        error = -1;
-        Warn_Message("No filename provided!\n");
+        error = 2;
+        Warn("No filename provided!");
     }
     if(!req->action){
-        error = -1;
-        Warn_Message("No action provided!\n");
+        error = 2;
+        Warn("No action provided!");
     }
         
 
     if(error)
-        Exit_Message("Exiting\n");
+        Exit(error, "Exiting");
     return error;
 }
 
 
 int main(int argc, char **argv){
-    (void)argc;
-    (void)argv;
-
     request_t req = parse_args(argc, argv);
     validate_request(&req);
 
-    req.action(&req);
-
-    return 0;
+    var ret = req.action(&req);
+    if(ret) Exit(ret, "Exiting with failure status due to previous errors");
+    return ret;
 }
 
 
