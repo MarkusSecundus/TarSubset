@@ -43,6 +43,10 @@ void * alloc_mem(size_t size){
 }
 
 
+typedef char* string_t;
+typedef string_t *strings_list_t;
+
+
 #define BLOCK_BYTES 512
 #define HEADER_BYTES 500
 
@@ -85,19 +89,15 @@ typedef struct {
 
 
 
-typedef char* string_t;
-typedef string_t *strings_list_t;
 
 
-typedef struct request request_t;
 
-typedef int (*user_action_t)(request_t *context);
-struct request {
+typedef struct request {
     string_t file_name;
     bool isVerbose;
     strings_list_t files;
-    user_action_t action;
-};
+    int (*action)(struct request *context);
+} request_t;
 
 
 
@@ -162,7 +162,7 @@ static void validate_checksum(tar_header_t *header){
     var checksum_field_original = *checksum_ptr;
     *checksum_ptr = 0;
 
-    var calculated_checksum = 256+ checksum(header, sizeof(tar_block_t));
+    var calculated_checksum = 256 + checksum(header, sizeof(tar_block_t));  //TODO: find out why adding 256 is needed!
     if(calculated_checksum != supposed_checksum){
         Warn("This does not look like a tar archive");
         Exit(2, "Exiting with failure status due to previous errors");
@@ -386,14 +386,15 @@ int list_contents_action(request_t *ctx){
     return iterate_archive_with_whitelist_decorator(ctx->file_name, "rb", perform_listing, ctx->files);
 }
 
-    typedef struct {
+
+    struct extract_action_impl_context {
         bool is_verbose;
-    } extract_action_impl_context; 
+    }; 
 
     int extract_action_impl(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)num_of_blocks;
 
-        extract_action_impl_context *ctx = (extract_action_impl_context*)ctx_;
+        struct extract_action_impl_context *ctx = (struct extract_action_impl_context*)ctx_;
         int ret = 0;
 
 
@@ -421,7 +422,7 @@ int list_contents_action(request_t *ctx){
     }
 
 int extract_action(request_t *ctx){
-    extract_action_impl_context action_ctx={
+    struct extract_action_impl_context action_ctx={
         .is_verbose = ctx->isVerbose
     };
 
