@@ -94,7 +94,7 @@ typedef struct {
 
 typedef struct request {
     string_t file_name;
-    bool isVerbose;
+    bool is_verbose;
     strings_list_t files;
     int (*action)(struct request *context);
 } request_t;
@@ -177,7 +177,7 @@ static void validate_header(tar_header_t *header){
         Exit(2, "Unsupported header type: %d", header->typeflag);
     
     (void)checksum;
-    if(!memcmp(header->magic, TMAGIC, 6) != 0)
+    if(!memcmp(header->magic, TMAGIC, LEN(header->magic)) != 0)
         Exit(2, "Wrong magic number");
 
     validate_checksum(header);
@@ -423,7 +423,7 @@ int list_contents_action(request_t *ctx){
 
 int extract_action(request_t *ctx){
     struct extract_action_impl_context action_ctx={
-        .is_verbose = ctx->isVerbose
+        .is_verbose = ctx->is_verbose
     };
 
     tar_entry_action_t perform_extraction = {
@@ -443,7 +443,7 @@ request_t parse_args(int argc, char **argv){
     request_t ret = {
         .action = NULL,
         .file_name = NULL,
-        .isVerbose = false,
+        .is_verbose = false,
         .files = argv
     };
 
@@ -469,7 +469,7 @@ request_t parse_args(int argc, char **argv){
                     ret.action = extract_action;
                     break;
                 case 'v':
-                    ret.isVerbose = true;
+                    ret.is_verbose = true;
                     break;
                 default:
                     Warn("Unknown option: -%c", arg[1]);
