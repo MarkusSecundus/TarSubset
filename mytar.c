@@ -73,6 +73,9 @@ typedef struct
                                 /* 500 */
 } tar_header_t;
 
+#define REGTYPE  '0'            /* regular file */
+#define AREGTYPE '\0'           /* regular file */
+
 typedef struct {
     tar_header_t header;
     char padding_[BLOCK_BYTES - sizeof(tar_header_t)];
@@ -155,6 +158,12 @@ static int check_header_checksum(tar_header_t *header){
 
 
 
+
+
+
+
+
+
     struct supplier_context{
         tar_block_t *buffer;
         size_t entry_bytes_remaining;
@@ -227,9 +236,12 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
         size_t bytes_in_file = parse_octal_array(buffer.header_block.header.size, NULL);
         size_t num_of_blocks = block_count_from_bytes(bytes_in_file);
 
+        if(buffer.header_block.header.typeflag != REGTYPE && buffer.header_block.header.typeflag != AREGTYPE)
+            Exit(2, "Unsupported header type: %d", buffer.header_block.header.typeflag);
 
         supplier_context.entry_bytes_remaining = bytes_in_file;
         ret |= invoke(action, &(buffer.header_block), num_of_blocks, block_supplier);
+
 
         if(bytes_in_file > (file_size - block_begin_pos)){
             Warn("Unexpected EOF in archive");
@@ -243,6 +255,28 @@ int iterate_archive(string_t fileName, string_t mode, tar_entry_action_t action)
 
     return ret;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
