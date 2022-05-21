@@ -1,4 +1,0 @@
-aaa-file
-empty.data
-file3.zero
-small-file

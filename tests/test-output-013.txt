@@ -1,2 +1,0 @@
-aaa-file
-mytar: A lone zero block at 22
