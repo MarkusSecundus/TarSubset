@@ -132,9 +132,11 @@ static unsigned int parse_octal(const char *c, size_t length, int *errno){
 }
 #define parse_octal_array(field, errno) parse_octal((field), LEN(field), errno) 
 
-static unsigned int checksum(void *arr, size_t length){
+static unsigned int checksum(void *arr, void *end_){
     unsigned int ret = 0;
-    for(unsigned char *p = (unsigned char*)arr; length-- > 0; ++p)
+    unsigned char *p = arr, *end = end_;
+    debug2("Checksum: begin: %p - end: %p, diff: %lu", p, end, end-p);
+    for(; p<end; ++p)
         ret += *p;
     return ret;
 }
@@ -158,17 +160,11 @@ static void validate_checksum(tar_header_t *header){
     if(errno)
         Exit(2, "Wrong checksum");
 
-    uint64_t *checksum_ptr = (uint64_t*) (&header->chksum);
-    var checksum_field_original = *checksum_ptr;
-    *checksum_ptr = 0;
-
-    var calculated_checksum = 256 + checksum(header, sizeof(tar_block_t));  //TODO: find out why adding 256 is needed!
+    var calculated_checksum = 256 + checksum(header, &(header->chksum)) + checksum(((void*)&(header->chksum)) + LEN(header->chksum), ((void*)header) + sizeof(tar_header_t));  //TODO: find out why adding 256 is needed!
     if(calculated_checksum != supposed_checksum){
         Warn("This does not look like a tar archive");
         Exit(2, "Exiting with failure status due to previous errors");
     }
-
-    *checksum_ptr = checksum_field_original;
 }
 
 
