@@ -5,7 +5,16 @@
 #include<stdlib.h>
 #include<err.h>
 
+/*---Exit codes-------------------------------------------------*/
+#define CMD_OPTIONS_ERRNO 2
+#define INVALID_FILE_ERRNO 2
+#define UNSUPPORTED_HEADER_ERRNO 2
+#define TRUNCATED_ARCHIVE_ERRNO 2
+#define OUT_OF_MEMORY_ERRNO 2
+
 /*---Random utility functions-------------------------------------------------*/
+
+
 
 #define LEN(arr) (sizeof(arr)/sizeof(*(arr)))
 #define invoke(func, ...) ((func).function((func).context, ## __VA_ARGS__))
@@ -27,7 +36,7 @@ static size_t fsize(FILE *f){
 
 static void * malloc_checked(size_t size){
     var ret = malloc(size);
-    if(!ret) err(143, "Out of memory!");
+    if(!ret) err(OUT_OF_MEMORY_ERRNO, "Out of memory!");
     return ret;
 }
 
@@ -186,7 +195,7 @@ void print_header_info(tar_header_block_t *block){
 
 /*      ---public definitions---*/
 typedef struct{
-    tar_block_t *(*function)(void *context, size_t *block_size_bytes);
+    size_t (*function)(void *context, size_t bytes_available, char *buffer_to_write);
     void *context;
 } tar_block_supplier_t;
 
@@ -199,27 +208,22 @@ typedef struct{
 /*      ---private helpers---*/
 
     struct iterate_archive_supplier_context{
-        tar_block_t *buffer;
         size_t entry_bytes_remaining;
         FILE *file;
     };
 
-    static tar_block_t *iterate_archive_supplier(void *context_, size_t *block_size_bytes){
+    static size_t iterate_archive_supplier(void *context_, size_t bytes_available, char *buffer){
         struct iterate_archive_supplier_context *ctx = (struct iterate_archive_supplier_context *)context_;
-        if(block_size_bytes) *block_size_bytes = 0;
 
         if(ctx->entry_bytes_remaining <= 0)
-            return NULL;
+            return 0;
 
-        size_t to_read = min(BLOCK_BYTES, ctx->entry_bytes_remaining);
-        size_t did_read = fread(&(ctx->buffer->data),1, to_read, ctx->file);
-        if(did_read < to_read)
+        size_t to_read = min(bytes_available, ctx->entry_bytes_remaining);
+        if(fread(buffer, 1, to_read, ctx->file) != to_read)
             ERROR_Unexpected_EOF_in_archive();
-        ctx->entry_bytes_remaining -= did_read;
+        ctx->entry_bytes_remaining -= to_read;
 
-        if(block_size_bytes) *block_size_bytes = did_read;
-
-        return ctx->buffer;
+        return to_read;
     }
 
 /*      ---function implementation---*/
@@ -230,14 +234,12 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
         tar_header_block_t header_block;
         tar_block_t block;
     } buffer;
-    tar_block_t contents_buffer;
 
 
     FILE *f = fopen(file_name, mode);
     if(!f) Exit(2, "File %s not found", file_name);
 
     struct iterate_archive_supplier_context supplier_context = {
-        .buffer = &(contents_buffer),
         .file = f
     };
     
@@ -400,6 +402,8 @@ int list_contents_action(request_t *ctx){
     int extract_action_impl(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)num_of_blocks;
 
+        char buffer[1024];
+
         struct extract_action_impl_context *ctx = (struct extract_action_impl_context*)ctx_;
         int ret = 0;
 
@@ -414,14 +418,13 @@ int list_contents_action(request_t *ctx){
             ret = -1;
         }
         else{
-            {size_t block_size = 0;
-            for(tar_block_t *it; (it = invoke(block_supplier, &block_size)); ){
-                if(fwrite(&(it->data), block_size, 1, output) != 1){
+            for(size_t block_size = 0; (block_size = invoke(block_supplier, LEN(buffer), buffer)); ){
+                if(fwrite(buffer, block_size, 1, output) != 1){
                     Warn("Error writing the file %s", name);
                     ret = -1;
                     break;
                 }
-            }}
+            }
         }
         fclose(output);
         return ret;
@@ -465,13 +468,15 @@ request_t parse_args(int argc, char **argv){
                     }else if((arg = argv[++t])){
                         ret.file_name = arg;
                     }else{
-                        errx(2, "Expected a filename but none provided!");
+                        Exit(CMD_OPTIONS_ERRNO, "Expected a filename but none provided!");
                     }
                     break;
                 case 't':
+                    if(ret.action) Warn("Action specified multiple times - overriding the former request with '-t'");
                     ret.action = list_contents_action;
                     break;
                 case 'x':
+                    if(ret.action) Warn("Action specified multiple times - overriding the former request with '-x'");
                     ret.action = extract_action;
                     break;
                 case 'v':
@@ -495,11 +500,11 @@ int validate_request(const request_t *req){
     int error = 0;
 
     if(!req->file_name){
-        error = 2;
+        error = CMD_OPTIONS_ERRNO;
         Warn("No filename provided!");
     }
     if(!req->action){
-        error = 2;
+        error = CMD_OPTIONS_ERRNO;
         Warn("No action provided!");
     }
         
