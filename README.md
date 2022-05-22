@@ -1,7 +1,5 @@
 # Tar
 
-__WORK IN PROGRESS__
+Tiny subset of the tar archiving utility created as semestral work for [The C Programming Language](https://devnull-cz.github.io/c-prog-lang/) class at MFF UK.
 
-Drobná podmnožina archivovací utility tar vytvořená jako zápočtový program na předmět [The C Programming Language](https://devnull-cz.github.io/c-prog-lang/) na MFF UK.
-
-Autor: Jakub Hroník
+Author: Jakub Hroník
