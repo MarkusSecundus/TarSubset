@@ -5,9 +5,7 @@
 #include<stdlib.h>
 #include<err.h>
 
-#define debug(...) //(fprintf(stderr, "\tD>> " __VA_ARGS__), fputc('\n', stderr))
-#define debug1(...) (fprintf(stderr, "\tD1>> " __VA_ARGS__), fputc('\n', stderr))
-#define debug2(...) //(fprintf(stderr, "\tD2>> " __VA_ARGS__), fputc('\n', stderr))
+/*---Random utility functions-------------------------------------------------*/
 
 #define LEN(arr) (sizeof(arr)/sizeof(*(arr)))
 #define invoke(func, ...) ((func).function((func).context, ## __VA_ARGS__))
@@ -17,17 +15,9 @@
 
 #define var __auto_type
 
-#define count_to_nil(arr)({\
-    size_t ret = 0;\
-    for(var _count_to_nill_ptr___ = arr;*_count_to_nill_ptr___;++_count_to_nill_ptr___)++ret;\
-    ret;\
-})
 
 
-#define Exit(errno, ...) (errx(errno, __VA_ARGS__))
-#define Warn(...) (warnx(__VA_ARGS__))
-
-size_t fsize(FILE *f){
+static size_t fsize(FILE *f){
     size_t block_begin_pos = ftell(f);
     fseek(f, 0, SEEK_END);
     size_t ret = ftell(f);
@@ -35,7 +25,7 @@ size_t fsize(FILE *f){
     return ret;
 }
 
-void * alloc_mem(size_t size){
+static void * malloc_checked(size_t size){
     var ret = malloc(size);
     if(!ret) err(143, "Out of memory!");
     return ret;
@@ -45,6 +35,12 @@ void * alloc_mem(size_t size){
 typedef char* string_t;
 typedef string_t *strings_list_t;
 
+
+#define Exit(errno, ...) errx(errno, __VA_ARGS__)
+#define Warn(...) warnx(__VA_ARGS__)
+
+
+/*---Tar block definition-------------------------------------------------*/
 
 #define BLOCK_BYTES 512
 
@@ -90,6 +86,7 @@ typedef struct {
 
 
 
+/*---Request object definition-------------------------------------------------*/
 
 typedef struct request {
     string_t file_name;
@@ -99,11 +96,22 @@ typedef struct request {
 } request_t;
 
 
+/*---Functions for reporting specific error scenarios-------------------------------------------------*/
+
+static void ERROR_This_does_not_look_like_a_tar_archive(){
+    Warn("This does not look like a tar archive");
+    Exit(2, "Exiting with failure status due to previous errors");
+}
+static void ERROR_Unexpected_EOF_in_archive(){
+    Warn("Unexpected EOF in archive");
+    Exit(2, "Error is not recoverable: exiting now");
+}
 
 
 
+/*---Utility functions for processing tar structures-------------------------------------------------*/
 
-size_t block_count_from_bytes(size_t bytes){
+static size_t block_count_from_bytes(size_t bytes){
     return bytes/BLOCK_BYTES + !!(bytes%BLOCK_BYTES);
 }
 
@@ -113,6 +121,11 @@ static bool is_end_block(const tar_block_t *block){
 }
 
 
+static size_t count_to_nil(void *arr){
+    size_t ret = 0;
+    for(void **p=arr; *p; ++p)++ret;
+    return ret;
+}
 
 static unsigned int parse_octal(const char *c, size_t length, int *errno){
     if(errno) *errno = 0;
@@ -131,33 +144,12 @@ static unsigned int parse_octal(const char *c, size_t length, int *errno){
 }
 #define parse_octal_array(field, errno) parse_octal((field), LEN(field), errno) 
 
-static unsigned int checksum(void *arr, void *end_){
+static unsigned int compute_checksum(void *arr, void *end_){
     unsigned int ret = 0;
     unsigned char *p = arr, *end = end_;
     for(; p<end; ++p)
         ret += *p;
     return ret;
-}
-
-
-typedef struct{
-    tar_block_t *(*function)(void *context, size_t *block_size_bytes);
-    void *context;
-} tar_block_supplier_t;
-typedef struct{
-    int (*function)(void *context, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier);
-    void *context;
-}tar_entry_action_t;
-
-
-
-static void This_does_not_look_like_a_tar_archive(){
-    Warn("This does not look like a tar archive");
-    Exit(2, "Exiting with failure status due to previous errors");
-}
-static void Unexpected_EOF_in_archive(){
-    Warn("Unexpected EOF in archive");
-    Exit(2, "Error is not recoverable: exiting now");
 }
 
 static void validate_checksum(tar_header_t *header){
@@ -167,10 +159,10 @@ static void validate_checksum(tar_header_t *header){
         Exit(2, "Wrong checksum");
 
     var calculated_checksum = 256  //TODO: find out why adding 256 is needed!
-                            + checksum(header, &(header->chksum)) 
-                            + checksum(((void*)&(header->chksum)) + LEN(header->chksum), ((void*)header) + sizeof(tar_header_t));
+                            + compute_checksum(header, &(header->chksum)) 
+                            + compute_checksum(((void*)&(header->chksum)) + LEN(header->chksum), ((void*)header) + sizeof(tar_header_t));
     if(calculated_checksum != supposed_checksum)
-        This_does_not_look_like_a_tar_archive();
+        ERROR_This_does_not_look_like_a_tar_archive();
 }
 
 
@@ -178,24 +170,42 @@ static void validate_header(tar_header_t *header){
     if(header->typeflag != REGTYPE && header->typeflag != AREGTYPE)
         Exit(2, "Unsupported header type: %d", header->typeflag);
     
-    (void)checksum;
     if(memcmp(header->magic, TMAGIC, LEN(header->magic)) && memcmp(header->magic, TOLDMAGIC, LEN(header->magic)))
-        This_does_not_look_like_a_tar_archive();
+        ERROR_This_does_not_look_like_a_tar_archive();
 
     validate_checksum(header);
 }
 
 
+void print_header_info(tar_header_block_t *block){
+        fprintf(stderr, "%s\n", block->header.name);
+}
 
 
-    struct supplier_context{
+/*---Tar archive iteration -------------------------------------------------*/
+
+/*      ---public definitions---*/
+typedef struct{
+    tar_block_t *(*function)(void *context, size_t *block_size_bytes);
+    void *context;
+} tar_block_supplier_t;
+
+typedef struct{
+    int (*function)(void *context, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier);
+    void *context;
+}tar_entry_action_t;
+
+
+/*      ---private helpers---*/
+
+    struct iterate_archive_supplier_context{
         tar_block_t *buffer;
         size_t entry_bytes_remaining;
         FILE *file;
     };
 
-    tar_block_t *iterate_archive_supplier(void *context_, size_t *block_size_bytes){
-        struct supplier_context *ctx = (struct supplier_context *)context_;
+    static tar_block_t *iterate_archive_supplier(void *context_, size_t *block_size_bytes){
+        struct iterate_archive_supplier_context *ctx = (struct iterate_archive_supplier_context *)context_;
         if(block_size_bytes) *block_size_bytes = 0;
 
         if(ctx->entry_bytes_remaining <= 0)
@@ -204,7 +214,7 @@ static void validate_header(tar_header_t *header){
         size_t to_read = min(BLOCK_BYTES, ctx->entry_bytes_remaining);
         size_t did_read = fread(&(ctx->buffer->data),1, to_read, ctx->file);
         if(did_read < to_read)
-            Unexpected_EOF_in_archive();
+            ERROR_Unexpected_EOF_in_archive();
         ctx->entry_bytes_remaining -= did_read;
 
         if(block_size_bytes) *block_size_bytes = did_read;
@@ -212,7 +222,7 @@ static void validate_header(tar_header_t *header){
         return ctx->buffer;
     }
 
-
+/*      ---function implementation---*/
 int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action){
     
 
@@ -226,7 +236,7 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
     FILE *f = fopen(file_name, mode);
     if(!f) Exit(2, "File %s not found", file_name);
 
-    struct supplier_context supplier_context = {
+    struct iterate_archive_supplier_context supplier_context = {
         .buffer = &(contents_buffer),
         .file = f
     };
@@ -267,7 +277,7 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
 
 
         if(bytes_in_file > (file_size - block_begin_pos))
-            Unexpected_EOF_in_archive();
+            ERROR_Unexpected_EOF_in_archive();
 
         fseek(f, block_begin_pos + num_of_blocks*BLOCK_BYTES, SEEK_SET);
     }
@@ -301,15 +311,17 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
 
 
 
+/*---Tar archive iteration with whitelist-------------------------------------------------*/
 
+/*      ---private helpers---*/
 
-    struct only_whitelist_files_decorator_context{
+    struct iterate_archive_with_whitelist_action_decorator_context{
         tar_entry_action_t inner_action;
         strings_list_t files_to_include;
         bool *files_to_include_was_encountered_flags;
     };
-    int only_whitelist_files_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
-        struct only_whitelist_files_decorator_context *ctx = (struct only_whitelist_files_decorator_context*)ctx_;
+    static int iterate_archive_with_whitelist_action_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
+        struct iterate_archive_with_whitelist_action_decorator_context *ctx = (struct iterate_archive_with_whitelist_action_decorator_context*)ctx_;
         
         bool *flag = ctx->files_to_include_was_encountered_flags;
         for(strings_list_t s = ctx->files_to_include; *s ; ++s, ++flag){
@@ -323,28 +335,26 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
         return 0;
     }
 
-int iterate_archive_with_whitelist_decorator(string_t file_name, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
+/*      ---function implementation---*/
+int iterate_archive_with_whitelist(string_t file_name, string_t mode, tar_entry_action_t action, strings_list_t files_to_include){
     
-    
-
-
     size_t files_count;
     if(!files_to_include || !(files_count = count_to_nil(files_to_include)))
         return iterate_archive(file_name, mode, action);
     size_t flag_buffer_size = files_count;
 
-    bool *flag_buffer = alloc_mem(flag_buffer_size*sizeof(bool));
+    bool *flag_buffer = malloc_checked(flag_buffer_size*sizeof(bool));
 
     for(size_t t = 0; t< flag_buffer_size ; ++t)   
         flag_buffer[t] = 0;
     
-    struct only_whitelist_files_decorator_context ctx = {
+    struct iterate_archive_with_whitelist_action_decorator_context ctx = {
         .inner_action = action,
         .files_to_include = files_to_include,
         .files_to_include_was_encountered_flags = flag_buffer
     };
     tar_entry_action_t decorated_action = {
-        .function = only_whitelist_files_decorator,
+        .function = iterate_archive_with_whitelist_action_decorator,
         .context = &ctx
     };
 
@@ -362,16 +372,14 @@ int iterate_archive_with_whitelist_decorator(string_t file_name, string_t mode, 
     return ret;
 }
 
-void print_header_info(tar_header_block_t *block){
-        fprintf(stderr, "%s\n", block->header.name);
-}
+
 
     static int list_contents_action__lister(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier){
         (void)ctx;
         (void)num_of_blocks;
         (void)block_supplier;
+        
         print_header_info(begin);
-
         return 0;
     }
 //option -t
@@ -381,7 +389,7 @@ int list_contents_action(request_t *ctx){
         .context = NULL
     };
 
-    return iterate_archive_with_whitelist_decorator(ctx->file_name, "rb", perform_listing, ctx->files);
+    return iterate_archive_with_whitelist(ctx->file_name, "rb", perform_listing, ctx->files);
 }
 
 
@@ -429,7 +437,7 @@ int extract_action(request_t *ctx){
         .context = &action_ctx
     };
 
-    return iterate_archive_with_whitelist_decorator(ctx->file_name, "rb", perform_extraction, ctx->files);
+    return iterate_archive_with_whitelist(ctx->file_name, "rb", perform_extraction, ctx->files);
 }
 
 
