@@ -21,6 +21,13 @@
 #define max(a, b) ((a) >= (b) ? (a) : (b))
 
 
+static void *malloc_checked(size_t size) {
+  void *ret = malloc(size);
+  if (!ret)
+    err(OUT_OF_MEMORY_ERRNO, "Out of memory!");
+  return ret;
+}
+
 static size_t fsize(FILE *f) {
   size_t block_begin_pos = ftell(f);
   fseek(f, 0, SEEK_END);
@@ -29,18 +36,12 @@ static size_t fsize(FILE *f) {
   return ret;
 }
 
-static void *malloc_checked(size_t size) {
-  void *ret = malloc(size);
-  if (!ret)
-    err(OUT_OF_MEMORY_ERRNO, "Out of memory!");
+static size_t nullterminated_list_length(char **arr) {
+  size_t ret = 0;
+  for (; *arr; ++arr)
+    ++ret;
   return ret;
 }
-
-typedef char *string_t;
-typedef string_t *strings_list_t;
-
-#define Exit(errno, ...) errx(errno, __VA_ARGS__)
-#define Warn(...) warnx(__VA_ARGS__)
 
 /*---Tar block definition-------------------------------------------------*/
 
@@ -85,21 +86,21 @@ typedef struct {
 /*---Request object definition-------------------------------------------------*/
 
 typedef struct request {
-  string_t file_name;
+  char *file_name;
   bool is_verbose;
-  strings_list_t files;
+  char **files;
   int (*action)(struct request *context);
 } request_t;
 
 /*---Functions for reporting specific error scenarios-------------------------------------------------*/
 
 static void ERROR_This_does_not_look_like_a_tar_archive() {
-  Warn("This does not look like a tar archive");
-  Exit(INVALID_FILE_ERRNO, "Exiting with failure status due to previous errors");
+  warnx("This does not look like a tar archive");
+  errx(INVALID_FILE_ERRNO, "Exiting with failure status due to previous errors");
 }
 static void ERROR_Unexpected_EOF_in_archive() {
-  Warn("Unexpected EOF in archive");
-  Exit(INVALID_ARCHIVE_ENTRY_ERRNO, "Error is not recoverable: exiting now");
+  warnx("Unexpected EOF in archive");
+  errx(INVALID_ARCHIVE_ENTRY_ERRNO, "Error is not recoverable: exiting now");
 }
 
 /*---Utility functions for processing tar structures-------------------------------------------------*/
@@ -111,13 +112,6 @@ static size_t block_count_from_bytes(size_t bytes) {
 static bool is_end_block(const tar_block_t *block) {
 
   return memcmp(block, &ZERO_BLOCK, BLOCK_BYTES) == 0;
-}
-
-static size_t count_until_null(void *arr) {
-  size_t ret = 0;
-  for (void **p = arr; *p; ++p)
-    ++ret;
-  return ret;
 }
 
 static unsigned int parse_octal(const char *c, size_t length, int *errno) {
@@ -137,8 +131,10 @@ static unsigned int parse_octal(const char *c, size_t length, int *errno) {
 }
 #define parse_octal_array(field, errno) parse_octal((field), LEN(field), errno)
 
-static unsigned int compute_checksum(void *arr, void *end_) {
-  unsigned int ret = 0;
+typedef unsigned int checksum_t; 
+
+static checksum_t compute_checksum(void *arr, void *end_) {
+  checksum_t ret = 0;
   for (unsigned char *p = arr, *end = end_; p < end; ++p)
     ret += *p;
   return ret;
@@ -146,13 +142,13 @@ static unsigned int compute_checksum(void *arr, void *end_) {
 
 static void validate_checksum(tar_header_t *header) {
   int errno = 0;
-  unsigned int supposed_checksum = parse_octal_array(header->chksum, &errno);
+  checksum_t supposed_checksum = parse_octal_array(header->chksum, &errno);
   if (errno)
-    Exit(INVALID_ARCHIVE_ENTRY_ERRNO, "Wrong checksum");
+    errx(INVALID_ARCHIVE_ENTRY_ERRNO, "Wrong checksum");
 
-  unsigned int calculated_checksum = 256 // TODO: find out why adding 256 is needed!
-                            + compute_checksum(header, &(header->chksum)) 
-                            + compute_checksum(((void *)&(header->chksum)) + LEN(header->chksum), ((void *)header) + sizeof(tar_header_t));
+  checksum_t calculated_checksum = 256 // TODO: find out why adding 256 is needed!
+                                  + compute_checksum(header, &(header->chksum)) 
+                                  + compute_checksum(((void *)&(header->chksum)) + LEN(header->chksum), ((void *)header) + sizeof(tar_header_t));
 
   if (calculated_checksum != supposed_checksum)
     ERROR_This_does_not_look_like_a_tar_archive();
@@ -160,7 +156,7 @@ static void validate_checksum(tar_header_t *header) {
 
 static void validate_header(tar_header_t *header) {
   if (header->typeflag != REGTYPE && header->typeflag != AREGTYPE)
-    Exit(UNSUPPORTED_HEADER_ERRNO, "Unsupported header type: %d", header->typeflag);
+    errx(UNSUPPORTED_HEADER_ERRNO, "Unsupported header type: %d", header->typeflag);
 
   if (memcmp(header->magic, TMAGIC, LEN(header->magic)) && memcmp(header->magic, TOLDMAGIC, LEN(header->magic)))
     ERROR_This_does_not_look_like_a_tar_archive();
@@ -168,7 +164,7 @@ static void validate_header(tar_header_t *header) {
   validate_checksum(header);
 }
 
-void print_header_info(tar_header_block_t *block) {
+static void print_header_info(tar_header_block_t *block) {
   fprintf(stderr, "%s\n", block->header.name);
 }
 
@@ -207,7 +203,7 @@ static size_t iterate_archive_supplier(void *context_, size_t bytes_available, c
 }
 
 /*      ---function implementation---*/
-int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action) {
+int iterate_archive(char *file_name, char *mode, tar_entry_action_t action) {
 
   union {
     tar_header_block_t header_block;
@@ -216,7 +212,7 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
 
   FILE *f = fopen(file_name, mode);
   if (!f)
-    Exit(INVALID_FILE_ERRNO, "File %s not found", file_name);
+    errx(INVALID_FILE_ERRNO, "File %s not found", file_name);
 
   struct iterate_archive_supplier_context supplier_context = {
     .file = f
@@ -240,7 +236,7 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
     if (is_end_block(&(buffer.block))) {
       size_t zero_block_num = block_count_from_bytes(ftell(f));
       if (!read_block() || !is_end_block(&(buffer.block))) {
-        Warn("A lone zero block at %lu", zero_block_num);
+        warnx("A lone zero block at %lu", zero_block_num);
         break;
       }
       if (is_end_block(&(buffer.block)))
@@ -274,17 +270,17 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
 
 struct iterate_archive_with_whitelist_action_decorator_context {
   tar_entry_action_t inner_action;
-  strings_list_t files_to_include;
+  char ** files_to_include;
   bool *files_to_include_was_encountered_flags;
 };
 static int iterate_archive_with_whitelist_action_decorator(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier) {
   struct iterate_archive_with_whitelist_action_decorator_context *ctx = (struct iterate_archive_with_whitelist_action_decorator_context *)ctx_;
 
   bool *flag = ctx->files_to_include_was_encountered_flags;
-  for (strings_list_t s = ctx->files_to_include; *s; ++s, ++flag) {
+  for (char **s = ctx->files_to_include; *s; ++s, ++flag) {
     if (strcmp(*s, begin->header.name) == 0) {
       if (*flag)
-        Warn("File '%s' encountered for more then first time!", *s);
+        warnx("File '%s' encountered for more then first time!", *s);
       *flag = true;
       return invoke(ctx->inner_action, begin, num_of_blocks, block_supplier);
     }
@@ -293,10 +289,10 @@ static int iterate_archive_with_whitelist_action_decorator(void *ctx_, tar_heade
 }
 
 /*      ---function implementation---*/
-int iterate_archive_with_whitelist(string_t file_name, string_t mode, tar_entry_action_t action, strings_list_t files_to_include) {
+int iterate_archive_with_whitelist(char *file_name, char *mode, tar_entry_action_t action, char **files_to_include) {
 
   size_t files_count;
-  if (!files_to_include || !(files_count = count_until_null(files_to_include)))
+  if (!files_to_include || !(files_count = nullterminated_list_length(files_to_include)))
     return iterate_archive(file_name, mode, action);
   size_t flag_buffer_size = files_count;
 
@@ -319,7 +315,7 @@ int iterate_archive_with_whitelist(string_t file_name, string_t mode, tar_entry_
 
   for (size_t t = 0; t < flag_buffer_size; ++t) {
     if (!flag_buffer[t]) {
-      Warn("%s: Not found in archive", files_to_include[t]);
+      warnx("%s: Not found in archive", files_to_include[t]);
       if (!ret)
         ret = 2;
     }
@@ -330,7 +326,10 @@ int iterate_archive_with_whitelist(string_t file_name, string_t mode, tar_entry_
   return ret;
 }
 
-static int list_contents_action__lister(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier) {
+
+/*---Action for listing archive contents-------------------------------------------------*/
+
+static int list_contents_action_impl(void *ctx, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier) {
   (void)ctx;
   (void)num_of_blocks;
   (void)block_supplier;
@@ -341,12 +340,14 @@ static int list_contents_action__lister(void *ctx, tar_header_block_t *begin, si
 // option -t
 int list_contents_action(request_t *ctx) {
   tar_entry_action_t perform_listing = {
-    .function = list_contents_action__lister, 
+    .function = list_contents_action_impl, 
     .context = NULL
   };
 
   return iterate_archive_with_whitelist(ctx->file_name, "rb", perform_listing, ctx->files);
 }
+
+/*---Action for extracting archive contents-------------------------------------------------*/
 
 struct extract_action_impl_context {
   bool is_verbose;
@@ -355,7 +356,7 @@ struct extract_action_impl_context {
 int extract_action_impl(void *ctx_, tar_header_block_t *begin, size_t num_of_blocks, tar_block_supplier_t block_supplier) {
   (void)num_of_blocks;
 
-  char buffer[1024];
+  char buffer[BLOCK_BYTES*2];
 
   struct extract_action_impl_context *ctx = (struct extract_action_impl_context *)ctx_;
   int ret = 0;
@@ -366,13 +367,13 @@ int extract_action_impl(void *ctx_, tar_header_block_t *begin, size_t num_of_blo
   char *name = begin->header.name;
   FILE *output = fopen(name, "wb");
   if (!output) {
-    Warn("Cannot open file %s for write!", name);
+    warnx("Cannot open file %s for write!", name);
     ret = -1;
   } else {
     for (size_t block_size = 0;
          (block_size = invoke(block_supplier, LEN(buffer), buffer));) {
       if (fwrite(buffer, block_size, 1, output) != 1) {
-        Warn("Error writing the file %s", name);
+        warnx("Error writing the file %s", name);
         ret = -1;
         break;
       }
@@ -395,7 +396,10 @@ int extract_action(request_t *ctx) {
   return iterate_archive_with_whitelist(ctx->file_name, "rb", perform_extraction, ctx->files);
 }
 
-request_t parse_args(int argc, char **argv) {
+
+/*---Parsing commandline arguments-------------------------------------------------*/
+
+request_t parse_cmd_args(int argc, char **argv) {
   request_t ret = {
       .action = NULL,
       .file_name = NULL,
@@ -414,24 +418,24 @@ request_t parse_args(int argc, char **argv) {
         } else if ((arg = argv[++t])) {
           ret.file_name = arg;
         } else {
-          Exit(CMD_OPTIONS_ERRNO, "Expected a filename but none provided!");
+          errx(CMD_OPTIONS_ERRNO, "Expected a filename but none provided!");
         }
         break;
       case 't':
         if (ret.action)
-          Warn("Action specified multiple times - overriding the former request with '-t'");
+          warnx("Action specified multiple times - overriding the former request with '-t'");
         ret.action = list_contents_action;
         break;
       case 'x':
         if (ret.action)
-          Warn("Action specified multiple times - overriding the former request with '-x'");
+          warnx("Action specified multiple times - overriding the former request with '-x'");
         ret.action = extract_action;
         break;
       case 'v':
         ret.is_verbose = true;
         break;
       default:
-        Warn("Unknown option: -%c", arg[1]);
+        warnx("Unknown option: -%c", arg[1]);
         break;
       }
     } else {
@@ -448,24 +452,24 @@ int validate_request(const request_t *req) {
 
   if (!req->file_name) {
     error = CMD_OPTIONS_ERRNO;
-    Warn("No filename provided!");
+    warnx("No filename provided!");
   }
   if (!req->action) {
     error = CMD_OPTIONS_ERRNO;
-    Warn("No action provided!");
+    warnx("No action provided!");
   }
 
   if (error)
-    Exit(error, "Exiting with failure status due to previous errors");
+    errx(error, "Exiting with failure status due to previous errors");
   return error; //otherwise causes a warning
 }
 
 int main(int argc, char **argv) {
-  request_t req = parse_args(argc, argv);
+  request_t req = parse_cmd_args(argc, argv);
   validate_request(&req);
 
   int ret = req.action(&req);
   if (ret)
-    Exit(ret, "Exiting with failure status due to previous errors");
+    errx(ret, "Exiting with failure status due to previous errors");
   return ret;
 }
