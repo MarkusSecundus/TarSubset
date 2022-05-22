@@ -20,7 +20,6 @@
 #define min(a, b) ((a) <= (b) ? (a) : (b))
 #define max(a, b) ((a) >= (b) ? (a) : (b))
 
-#define var __auto_type
 
 static size_t fsize(FILE *f) {
   size_t block_begin_pos = ftell(f);
@@ -31,7 +30,7 @@ static size_t fsize(FILE *f) {
 }
 
 static void *malloc_checked(size_t size) {
-  var ret = malloc(size);
+  void *ret = malloc(size);
   if (!ret)
     err(OUT_OF_MEMORY_ERRNO, "Out of memory!");
   return ret;
@@ -147,11 +146,11 @@ static unsigned int compute_checksum(void *arr, void *end_) {
 
 static void validate_checksum(tar_header_t *header) {
   int errno = 0;
-  var supposed_checksum = parse_octal_array(header->chksum, &errno);
+  unsigned int supposed_checksum = parse_octal_array(header->chksum, &errno);
   if (errno)
     Exit(INVALID_ARCHIVE_ENTRY_ERRNO, "Wrong checksum");
 
-  var calculated_checksum = 256 // TODO: find out why adding 256 is needed!
+  unsigned int calculated_checksum = 256 // TODO: find out why adding 256 is needed!
                             + compute_checksum(header, &(header->chksum)) 
                             + compute_checksum(((void *)&(header->chksum)) + LEN(header->chksum), ((void *)header) + sizeof(tar_header_t));
 
@@ -465,7 +464,7 @@ int main(int argc, char **argv) {
   request_t req = parse_args(argc, argv);
   validate_request(&req);
 
-  var ret = req.action(&req);
+  int ret = req.action(&req);
   if (ret)
     Exit(ret, "Exiting with failure status due to previous errors");
   return ret;
