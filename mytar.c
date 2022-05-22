@@ -9,7 +9,7 @@
 #define CMD_OPTIONS_ERRNO 2
 #define INVALID_FILE_ERRNO 2
 #define UNSUPPORTED_HEADER_ERRNO 2
-#define TRUNCATED_ARCHIVE_ERRNO 2
+#define INVALID_ARCHIVE_ENTRY_ERRNO 2
 #define OUT_OF_MEMORY_ERRNO 2
 
 /*---Random utility functions-------------------------------------------------*/
@@ -96,11 +96,11 @@ typedef struct request {
 
 static void ERROR_This_does_not_look_like_a_tar_archive() {
   Warn("This does not look like a tar archive");
-  Exit(2, "Exiting with failure status due to previous errors");
+  Exit(INVALID_FILE_ERRNO, "Exiting with failure status due to previous errors");
 }
 static void ERROR_Unexpected_EOF_in_archive() {
   Warn("Unexpected EOF in archive");
-  Exit(2, "Error is not recoverable: exiting now");
+  Exit(INVALID_ARCHIVE_ENTRY_ERRNO, "Error is not recoverable: exiting now");
 }
 
 /*---Utility functions for processing tar structures-------------------------------------------------*/
@@ -149,7 +149,7 @@ static void validate_checksum(tar_header_t *header) {
   int errno = 0;
   var supposed_checksum = parse_octal_array(header->chksum, &errno);
   if (errno)
-    Exit(2, "Wrong checksum");
+    Exit(INVALID_ARCHIVE_ENTRY_ERRNO, "Wrong checksum");
 
   var calculated_checksum = 256 // TODO: find out why adding 256 is needed!
                             + compute_checksum(header, &(header->chksum)) 
@@ -161,7 +161,7 @@ static void validate_checksum(tar_header_t *header) {
 
 static void validate_header(tar_header_t *header) {
   if (header->typeflag != REGTYPE && header->typeflag != AREGTYPE)
-    Exit(2, "Unsupported header type: %d", header->typeflag);
+    Exit(UNSUPPORTED_HEADER_ERRNO, "Unsupported header type: %d", header->typeflag);
 
   if (memcmp(header->magic, TMAGIC, LEN(header->magic)) && memcmp(header->magic, TOLDMAGIC, LEN(header->magic)))
     ERROR_This_does_not_look_like_a_tar_archive();
@@ -217,7 +217,7 @@ int iterate_archive(string_t file_name, string_t mode, tar_entry_action_t action
 
   FILE *f = fopen(file_name, mode);
   if (!f)
-    Exit(2, "File %s not found", file_name);
+    Exit(INVALID_FILE_ERRNO, "File %s not found", file_name);
 
   struct iterate_archive_supplier_context supplier_context = {
     .file = f
@@ -457,7 +457,7 @@ int validate_request(const request_t *req) {
   }
 
   if (error)
-    Exit(error, "Exiting");
+    Exit(error, "Exiting with failure status due to previous errors");
   return error; //otherwise causes a warning
 }
 
