@@ -421,15 +421,16 @@ request_t parse_cmd_args(int argc, char **argv) {
           errx(CMD_OPTIONS_ERRNO, "Expected a filename but none provided!");
         }
         break;
-      case 't':
+        int (*action)(struct request *context);
+        if(0){
+          case 't': action = list_contents_action;
+        }
+        if(0){
+          case 'x': action = extract_action;
+        }
         if (ret.action)
-          warnx("Action specified multiple times - overriding the former request with '-t'");
-        ret.action = list_contents_action;
-        break;
-      case 'x':
-        if (ret.action)
-          warnx("Action specified multiple times - overriding the former request with '-x'");
-        ret.action = extract_action;
+          warnx("Action specified multiple times - overriding the former request with '-%c'", arg[1]);
+        ret.action = action;
         break;
       case 'v':
         ret.is_verbose = true;
